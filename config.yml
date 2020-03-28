@@ -1,0 +1,7 @@
+primary:
+   host: 35.205.162.2:122
+   replication_enabled: true
+replicas:
+   - host: localhost
+     active: false
+     datacenter: "somedata"
