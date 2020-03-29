@@ -53,14 +53,14 @@ func main() {
 	// Parse config file
 	f, err := os.Open(*configPath)
 	if err != nil {
-		fmt.Printf("Unable to Open Config file %v", err)
+		fmt.Printf("Unable to Open Config file %v \n", err)
 	}
 	defer f.Close()
 	var cfg YamlConfig
 	decoder := yaml.NewDecoder(f)
 	err = decoder.Decode(&cfg)
 	if err != nil {
-		fmt.Printf("Something happened while reading the config file: %v", err)
+		fmt.Printf("Something happened while reading the config file: %v \n", err)
 	}
 	// Connect to remote host
 	mHost := cfg.Primary.Host
@@ -71,7 +71,7 @@ func main() {
 	}
 	defer closeConnection(client)
 	// Run commands
-	currentVersion, err := version.NewVersion(getVersion(client))
+	currentVersion, err := version.NewVersion(gerInstalledVersion(client))
 	if currentVersion.GreaterThanOrEqual(targetVersion) {
 		fmt.Printf("Target Version %s is less than Current installed version %s", targetVersion, currentVersion)
 	} else {
@@ -105,7 +105,7 @@ func connectToHost(user, host, port string) (*ssh.Client, error) {
 		return nil, fmt.Errorf("unable to parse private key: %v", err)
 	}
 
-	fmt.Printf("Connecting to host %s, port %s", host, port)
+	fmt.Printf("Connecting to host %s, port %s \n", host, port)
 	hostKey, err := getHostKey(host)
 	if err != nil {
 		return nil, err
@@ -156,6 +156,7 @@ func getHostKey(host string) (ssh.PublicKey, error) {
 	}
 	return hostKey, nil
 }
+
 func executeCmd(client *ssh.Client, cmd string) error {
 	// Create session
 	session, err := client.NewSession()
@@ -163,10 +164,6 @@ func executeCmd(client *ssh.Client, cmd string) error {
 		return fmt.Errorf("Failed to open SSH Session: %v", err)
 	}
 	defer session.Close()
-	// Once a Session is created, you can execute a single command on
-	// the remote side using the Run method.
-	// var b bytes.Buffer
-	// session.Stdout = &b
 	stdin, err := session.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("Unable to setup stdin for session: %v", err)
@@ -205,65 +202,75 @@ func getHostPort(mHost string) (host, port string) {
 	return h, p
 }
 
-func getVersion(client *ssh.Client) string {
+// Since we need to read version from output, we separate it from the general method
+// by using a Buffer to capture generated output from the method and parse it to get
+// the installed version
+func gerInstalledVersion(client *ssh.Client) string {
 	const (
-		GTHVersion  = "ghe-version"
+		GTHVersionCmd  = "ghe-version"
 		semverRegex = "([0-9]+)(\\.[0-9]+)?(\\.[0-9]+)"
 	)
 
 	// Create session
 	session, err := client.NewSession()
 	if err != nil {
-		fmt.Printf("Failed to open SSH Session: %v", err)
+		fmt.Errorf("Failed to open SSH Session: %v", err)
 	}
-	var b bytes.Buffer
-	session.Stdout = &b
+	var buffer bytes.Buffer
+	session.Stdout = &buffer
 
-	if err := session.Run(GTHVersion); err != nil {
-		fmt.Printf("Failed to run: %v", err)
+	if err := session.Run(GTHVersionCmd); err != nil {
+		fmt.Errorf("Failed to run: %v", err)
 	}
 	re := regexp.MustCompile(semverRegex)
-	return re.FindString(b.String())
-
+	return re.FindString(buffer.String())
 }
 
 func downloadPatchURL(version []int) string {
 	githubPatchURL := "https://github-enterprise.s3.amazonaws.com/hotpatch/"
 	githubPatchURL += strconv.Itoa(version[0]) + "." + strconv.Itoa(version[1])
-	githubPatchURL += "/github-enterprise-" + strconv.Itoa(version[0]) + "." + strconv.Itoa(version[1]) + "." + strconv.Itoa(version[2])
-	githubPatchURL += ".hpkg"
+	githubPatchURL += "/" + getPackageName(version)
 
 	return githubPatchURL
 }
 
 func performHotPath(client *ssh.Client, version []int) {
-	pkgName := "github-enterprise-" + strconv.Itoa(version[0]) + "." + strconv.Itoa(version[1]) + "." + strconv.Itoa(version[2]) + ".hpkg"
-	downloadPkgCmd := "cd /tmp && curl -L -O " + downloadPatchURL(version)
+	pkgName := getPackageName(version)
+	patchURL :=  downloadPatchURL(version)
+	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
 	updateCmd := "cd /tmp && ghe-upgrade -y " + pkgName
 
-	fmt.Print("downloading  " + downloadPatchURL(version))
-	fmt.Print("downloading package " + pkgName)
+	fmt.Println("downloading package " + pkgName)
 	executeCmd(client, downloadPkgCmd)
-	fmt.Print("Install the package" + pkgName)
+	fmt.Println("Install the package" + pkgName)
 	executeCmd(client, updateCmd)
 }
 
 func performUpgrade(client *ssh.Client, version []int) {
-	pkgName := "github-enterprise-" + strconv.Itoa(version[0]) + "." + strconv.Itoa(version[1]) + "." + strconv.Itoa(version[2]) + ".hpkg"
-	downloadPkgCmd := "cd /tmp && curl -L -O " + downloadPatchURL(version)
+	pkgName := getPackageName(version)
+	patchURL :=  downloadPatchURL(version)
+	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
 	maintenanceCmd := "ghe-maintenance -s"
 	stopReplicationCmd := "ghe-repl-stop"
 	removeMaintenanceCmd := "ghe-maintenance -u"
 	updateCmd := "cd /tmp && ghe-upgrade -y " + pkgName
 
-	fmt.Print("downloading package " + pkgName)
+	fmt.Println("downloading package " + pkgName)
 	executeCmd(client, downloadPkgCmd)
-	fmt.Print("Set maintenance mode")
+	fmt.Println("Set maintenance mode")
 	executeCmd(client, maintenanceCmd)
-	fmt.Print("Stop the replication")
+	fmt.Println("Stop the replication")
 	executeCmd(client, stopReplicationCmd)
-	fmt.Print("Install the package" + pkgName)
+	fmt.Println("Install the package" + pkgName)
 	executeCmd(client, updateCmd)
-	fmt.Print("Remove the maintenance mode")
+	fmt.Println("Remove the maintenance mode")
 	executeCmd(client, removeMaintenanceCmd)
+}
+
+func getPackageName(versionArray []int) string {
+	version := strings.Trim(strings.Replace(fmt.Sprint(versionArray), " ", ".", -1), "[]")
+	var pkgName = "github-enterprise-"
+	pkgName += version
+	pkgName += ".hpkg"
+	return pkgName
 }
