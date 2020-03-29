@@ -1,6 +1,6 @@
 primary:
    host: 35.205.162.2:122
-   replication_enabled: true
+   replication_enabled: false
 replicas:
    - host: localhost
      active: false
