@@ -2,6 +2,6 @@ primary:
    host: 35.205.162.2:122
    replication_enabled: false
 replicas:
-   - host: localhost
+   - host: 88.99.195.170:22
      active: false
      datacenter: "somedata"

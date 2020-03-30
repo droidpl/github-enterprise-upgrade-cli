@@ -25,28 +25,30 @@ type YamlConfig struct {
 	Primary struct {
 		Host      string `yaml:"host"`
 		IsReplica bool   `yaml:"replication_enabled"`
-		Client 	  *ssh.Client
+		Client    *ssh.Client
 	} `yaml:"primary"`
 	Replicas []struct {
 		Host       string `yaml:"host"`
 		IsActive   bool   `yaml:"active"`
 		Datacenter string `yaml:"datacenter"`
-		Client 	  *ssh.Client
+		Client     *ssh.Client
 	} `yaml:"replicas"`
 }
 
 // Constants
 const (
-	Port = "22"
-	User = "admin"
-	// ghr commands
+	Port       = "22"
+	User       = "admin"
 	GTHVersion = "ghe-version"
 )
+
+var sshConfigPath *string
 
 func main() {
 	// read the options
 	configPath := flag.String("config", "config.yml", "Configuration file")
 	userversion := flag.String("v", "", "GHE version")
+	sshConfigPath = flag.String("ssh-config", filepath.Join(os.Getenv("HOME"), ".ssh"), "SSH keys folder path")
 
 	flag.Parse()
 	targetVersion, err := version.NewVersion(*userversion)
@@ -63,9 +65,14 @@ func main() {
 	if err != nil {
 		fmt.Printf("Something happened while reading the config file: %v \n", err)
 	}
-	cfg = checkConnectivity(cfg)
+	cfg, err = checkConnectivity(cfg)
+	if err != nil {
+		fmt.Printf("%v", err)
+	}
 	currentVersion, err := version.NewVersion(gerInstalledVersion(cfg.Primary.Client))
-	checkPrimaryReplicasVersion(cfg, currentVersion)
+	if cfg.Primary.IsReplica {
+		checkPrimaryReplicasVersion(cfg, currentVersion)
+	}
 	// Verify Target version with the current installed version
 	if currentVersion.GreaterThanOrEqual(targetVersion) {
 		fmt.Printf("Target Version %s is less than Current installed version %s", targetVersion, currentVersion)
@@ -87,7 +94,7 @@ func connectToHost(user, host, port string) (*ssh.Client, error) {
 	//
 	// If you have an encrypted private key, the crypto/x509 package
 	// can be used to decrypt it.
-	key, err := ioutil.ReadFile(filepath.Join(os.Getenv("HOME"), ".ssh", "id_rsa"))
+	key, err := ioutil.ReadFile(filepath.Join(*sshConfigPath, "id_rsa"))
 	if err != nil {
 		return nil, fmt.Errorf("unable to read private key: %v", err)
 	}
@@ -119,7 +126,7 @@ func connectToHost(user, host, port string) (*ssh.Client, error) {
 }
 
 func getHostKey(host string) (ssh.PublicKey, error) {
-	file, err := os.Open(filepath.Join(os.Getenv("HOME"), ".ssh", "known_hosts"))
+	file, err := os.Open(filepath.Join(*sshConfigPath, "known_hosts"))
 	if err != nil {
 		return nil, err
 	}
@@ -198,20 +205,19 @@ func getHostPort(mHost string) (host, port string) {
 // the installed version
 func gerInstalledVersion(client *ssh.Client) string {
 	const (
-		GTHVersionCmd  = "ghe-version"
-		semverRegex = "([0-9]+)(\\.[0-9]+)?(\\.[0-9]+)"
+		GTHVersionCmd = "ghe-version"
+		semverRegex   = "([0-9]+)(\\.[0-9]+)?(\\.[0-9]+)"
 	)
-
 	// Create session
 	session, err := client.NewSession()
 	if err != nil {
-		fmt.Errorf("Failed to open SSH Session: %v", err)
+		fmt.Printf("Failed to open SSH Session: %v", err)
 	}
 	var buffer bytes.Buffer
 	session.Stdout = &buffer
 
 	if err := session.Run(GTHVersionCmd); err != nil {
-		fmt.Errorf("Failed to run: %v", err)
+		fmt.Printf("Failed to run: %v", err)
 	}
 	re := regexp.MustCompile(semverRegex)
 	return re.FindString(buffer.String())
@@ -227,7 +233,7 @@ func downloadPatchURL(version []int) string {
 
 func performHotPath(client *ssh.Client, version []int) {
 	pkgName := getPackageName(version)
-	patchURL :=  downloadPatchURL(version)
+	patchURL := downloadPatchURL(version)
 	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
 	updateCmd := "cd /tmp && ghe-upgrade -y " + pkgName
 
@@ -239,7 +245,7 @@ func performHotPath(client *ssh.Client, version []int) {
 
 func performUpgrade(client *ssh.Client, version []int) {
 	pkgName := getPackageName(version)
-	patchURL :=  downloadPatchURL(version)
+	patchURL := downloadPatchURL(version)
 	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
 	maintenanceCmd := "ghe-maintenance -s"
 	stopReplicationCmd := "ghe-repl-stop"
@@ -266,13 +272,13 @@ func getPackageName(versionArray []int) string {
 	return pkgName
 }
 
-func checkConnectivity(config YamlConfig) YamlConfig{
+func checkConnectivity(config YamlConfig) (YamlConfig, error) {
 	pHost := config.Primary.Host
 	fmt.Printf("Checking Connectivity of the primary %s ...", pHost)
 	host, port := getHostPort(pHost)
 	client, err := connectToHost(User, host, port)
 	if err != nil {
-		fmt.Printf("failed to connect to primary %s: %s", host, err)
+		return config, fmt.Errorf("failed to connect to primary %s: %s", host, err)
 	}
 	config.Primary.Client = client
 	fmt.Println("Success")
@@ -283,24 +289,23 @@ func checkConnectivity(config YamlConfig) YamlConfig{
 			host, port := getHostPort(rHost)
 			client, err := connectToHost(User, host, port)
 			if err != nil {
-				fmt.Printf("failed to connect to replica %s: %s", host, err)
+				return config, fmt.Errorf("failed to connect to replica %s ", host)
 			}
 			replica.Client = client
 			fmt.Println("Success")
 		}
 	}
-	return config
+	return config, nil
 }
 
-func checkPrimaryReplicasVersion(config YamlConfig, currentVersion version){
-	fmt.Println("Comparing Replicas GHE version to primary. Current version is "+ version.String())
+func checkPrimaryReplicasVersion(config YamlConfig, currentVersion *version.Version) {
+	fmt.Println("Comparing Replicas GHE version to primary. Current version is " + currentVersion.String())
 	for _, replica := range config.Replicas {
 		rHost := replica.Host
-		replicaVersion:= gerInstalledVersion(replica.Client)
-		if(!version.Equal){
-			panic("Replica "+ rHost + " does not have the same version as primary! Current version is " + replicaVersion.String())
+		replicaVersion, _ := version.NewVersion(gerInstalledVersion(replica.Client))
+		if !currentVersion.Equal(currentVersion) {
+			panic("Replica " + rHost + " does not have the same version as primary! Current version is " + replicaVersion.String())
 		}
 	}
 	fmt.Println("Success! Primary and replicas have the same version")
 }
-
