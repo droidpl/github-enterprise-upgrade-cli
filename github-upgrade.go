@@ -64,10 +64,13 @@ func main() {
 	err = decoder.Decode(&cfg)
 	if err != nil {
 		fmt.Printf("Something happened while reading the config file: %v \n", err)
+		os.Exit(1)
+
 	}
 	cfg, err = checkConnectivity(cfg)
 	if err != nil {
 		fmt.Printf("%v", err)
+		os.Exit(1)
 	}
 	currentVersion, err := version.NewVersion(gerInstalledVersion(cfg.Primary.Client))
 	if cfg.Primary.IsReplica {
@@ -304,7 +307,9 @@ func checkPrimaryReplicasVersion(config YamlConfig, currentVersion *version.Vers
 		rHost := replica.Host
 		replicaVersion, _ := version.NewVersion(gerInstalledVersion(replica.Client))
 		if !currentVersion.Equal(currentVersion) {
-			panic("Replica " + rHost + " does not have the same version as primary! Current version is " + replicaVersion.String())
+			// fail and exit
+			fmt.Printf("Replica %v does not have the same version as primary! Current version is %v", rHost, replicaVersion.String())
+			os.Exit(1)
 		}
 	}
 	fmt.Println("Success! Primary and replicas have the same version")
