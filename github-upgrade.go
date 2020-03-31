@@ -24,11 +24,13 @@ import (
 type YamlConfig struct {
 	Primary struct {
 		Host      string `yaml:"host"`
+		USer      string `yaml:"user"`
 		IsReplica bool   `yaml:"replication_enabled"`
 		Client    *ssh.Client
 	} `yaml:"primary"`
 	Replicas []struct {
 		Host       string `yaml:"host"`
+		USer       string `yaml:"user"`
 		IsActive   bool   `yaml:"active"`
 		Datacenter string `yaml:"datacenter"`
 		Client     *ssh.Client
@@ -277,9 +279,10 @@ func getPackageName(versionArray []int) string {
 
 func checkConnectivity(config YamlConfig) (YamlConfig, error) {
 	pHost := config.Primary.Host
+	pUser := config.Primary.USer
 	fmt.Printf("Checking Connectivity of the primary %s ...", pHost)
 	host, port := getHostPort(pHost)
-	client, err := connectToHost(User, host, port)
+	client, err := connectToHost(pUser, host, port)
 	if err != nil {
 		return config, fmt.Errorf("failed to connect to primary %s: %s", host, err)
 	}
@@ -288,9 +291,10 @@ func checkConnectivity(config YamlConfig) (YamlConfig, error) {
 	if config.Primary.IsReplica {
 		for _, replica := range config.Replicas {
 			rHost := replica.Host
+			rUser := replica.USer
 			fmt.Printf("Checking Connectivity of the replica %s ...", rHost)
 			host, port := getHostPort(rHost)
-			client, err := connectToHost(User, host, port)
+			client, err := connectToHost(rUser, host, port)
 			if err != nil {
 				return config, fmt.Errorf("failed to connect to replica %s ", host)
 			}
