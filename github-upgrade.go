@@ -42,6 +42,7 @@ const (
 	Port       = "22"
 	User       = "admin"
 	GTHVersion = "ghe-version"
+	Platform   = "esx"
 )
 
 var sshConfigPath *string
@@ -236,6 +237,16 @@ func downloadPatchURL(version []int) string {
 	return githubPatchURL
 }
 
+func downloadUpgradeURL(version []int) string {
+	githubUpgradeURL := "https://github-enterprise.s3.amazonaws.com/"
+	githubUpgradeURL += "/" + Platform
+	githubUpgradeURL += "/updates/github-enterprise" + Platform
+	githubUpgradeURL += strconv.Itoa(version[0]) + "." + strconv.Itoa(version[1])
+	githubUpgradeURL += "/" + getPackageName(version)
+
+	return githubUpgradeURL
+}
+
 func performHotPath(client *ssh.Client, version []int) {
 	pkgName := getPackageName(version)
 	patchURL := downloadPatchURL(version)
@@ -250,7 +261,7 @@ func performHotPath(client *ssh.Client, version []int) {
 
 func performUpgrade(client *ssh.Client, version []int) {
 	pkgName := getPackageName(version)
-	patchURL := downloadPatchURL(version)
+	patchURL := downloadUpgradeURL(version)
 	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
 	maintenanceCmd := "ghe-maintenance -s"
 	stopReplicationCmd := "ghe-repl-stop"
