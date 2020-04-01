@@ -8,6 +8,7 @@ Script options are:
         Configuration file (default "config.yml")
   -p string
         Platform your Github Entreprise is running on (default "esx")
+        supported platforms are: "hyperv", "kvm", "esx", "xen", "ami", "azure", "gce"
   -ssh-config string
         SSH keys folder path (default "~/.ssh")
   -v string
@@ -24,6 +25,5 @@ replicas:                        // list of replicas
    - host: host:port             // IP and ssh port to connect to (port is default to 22)
      user: user                  // user to connect with default to root
      active: false               // is the replica active or not (default to false)
-     datacenter: "somedata"      // datacenter name for georeplication
-
+     datacenter: "somedata"      // datacenter name for georeplication (optional)
 ```
