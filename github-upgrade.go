@@ -83,6 +83,7 @@ func main() {
 	verifyConfigOption(cfg)
 	// check connectivity and get clients
 	cfg = setupSSHClient(cfg)
+	defer closeConnection(cfg)
 	// get GHE version installed on server & verify it's the same on Primary and replicas
 	currentVersion, _ := version.NewVersion(gerInstalledVersion(cfg.Primary.Client))
 	if cfg.Primary.IsReplica {
@@ -202,8 +203,11 @@ func executeCmd(client *ssh.Client, cmd string) error {
 	return nil
 }
 
-func closeConnection(client *ssh.Client) {
-	client.Close()
+func closeConnection(config YamlConfig) {
+	config.Primary.Client.Close()
+	for _, replica := range config.Replicas {
+		replica.Client.Close()
+	}
 }
 
 // Since we need to read version from output, we separate it from the general method
