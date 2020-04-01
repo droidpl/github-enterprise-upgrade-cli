@@ -42,7 +42,6 @@ const (
 	Port       = "22"
 	User       = "admin"
 	GTHVersion = "ghe-version"
-	Platform   = "esx"
 )
 
 var sshConfigPath *string
@@ -51,11 +50,21 @@ func main() {
 	// read the options
 	configPath := flag.String("config", "config.yml", "Configuration file")
 	userversion := flag.String("v", "", "GHE version")
+	platform := flag.String("p", "esx", "Platform your Github Entreprise is running on")
 	sshConfigPath = flag.String("ssh-config", filepath.Join(os.Getenv("HOME"), ".ssh"), "SSH keys folder path")
-
 	flag.Parse()
+	// Cast the new version
 	targetVersion, err := version.NewVersion(*userversion)
-
+	if err != nil {
+		fmt.Printf("An error happened while casting GHE specified version %v : %v", *userversion, err)
+		os.Exit(1)
+	}
+	// Check the selected platform
+	supportedPlatforms := getSupportedPlatforms()
+	if !exist(supportedPlatforms, *platform) {
+		fmt.Printf("Unrecognized platforms %v, valid options are: %v", *platform, strings.Join(supportedPlatforms, ", "))
+		os.Exit(1)
+	}
 	// Parse config file
 	f, err := os.Open(*configPath)
 	if err != nil {
@@ -237,10 +246,10 @@ func downloadPatchURL(version []int) string {
 	return githubPatchURL
 }
 
-func downloadUpgradeURL(version []int) string {
+func downloadUpgradeURL(version []int, platform string) string {
 	githubUpgradeURL := "https://github-enterprise.s3.amazonaws.com/"
-	githubUpgradeURL += "/" + Platform
-	githubUpgradeURL += "/updates/github-enterprise" + Platform
+	githubUpgradeURL += "/" + platform
+	githubUpgradeURL += "/updates/github-enterprise" + platform
 	githubUpgradeURL += strconv.Itoa(version[0]) + "." + strconv.Itoa(version[1])
 	githubUpgradeURL += "/" + getPackageName(version)
 
@@ -259,9 +268,9 @@ func performHotPath(client *ssh.Client, version []int) {
 	executeCmd(client, updateCmd)
 }
 
-func performUpgrade(client *ssh.Client, version []int) {
+func performUpgrade(client *ssh.Client, version []int, platform string) {
 	pkgName := getPackageName(version)
-	patchURL := downloadUpgradeURL(version)
+	patchURL := downloadUpgradeURL(version, platform)
 	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
 	maintenanceCmd := "ghe-maintenance -s"
 	stopReplicationCmd := "ghe-repl-stop"
@@ -328,4 +337,16 @@ func checkPrimaryReplicasVersion(config YamlConfig, currentVersion *version.Vers
 		}
 	}
 	fmt.Println("Success! Primary and replicas have the same version")
+}
+
+func getSupportedPlatforms() []string {
+	return []string{"hyperv", "kvm", "esx", "xen", "ami", "azure", "gce"}
+}
+func exist(a []string, x string) bool {
+	for _, n := range a {
+		if x == n {
+			return true
+		}
+	}
+	return false
 }
