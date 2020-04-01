@@ -24,13 +24,13 @@ import (
 type YamlConfig struct {
 	Primary struct {
 		Host      string `yaml:"host"`
-		USer      string `yaml:"user"`
+		User      string `yaml:"user"`
 		IsReplica bool   `yaml:"replication_enabled"`
 		Client    *ssh.Client
 	} `yaml:"primary"`
 	Replicas []struct {
 		Host       string `yaml:"host"`
-		USer       string `yaml:"user"`
+		User       string `yaml:"user"`
 		IsActive   bool   `yaml:"active"`
 		Datacenter string `yaml:"datacenter"`
 		Client     *ssh.Client
@@ -40,7 +40,7 @@ type YamlConfig struct {
 // Constants
 const (
 	Port       = "22"
-	User       = "admin"
+	User       = "root"
 	GTHVersion = "ghe-version"
 )
 
@@ -299,7 +299,11 @@ func getPackageName(versionArray []int) string {
 
 func checkConnectivity(config YamlConfig) (YamlConfig, error) {
 	pHost := config.Primary.Host
-	pUser := config.Primary.USer
+	pUser := config.Primary.User
+	// if no user specified, use default used
+	if pUser == "" {
+		pUser = User
+	}
 	fmt.Printf("Checking Connectivity of the primary %s ...", pHost)
 	host, port := getHostPort(pHost)
 	client, err := connectToHost(pUser, host, port)
@@ -311,7 +315,11 @@ func checkConnectivity(config YamlConfig) (YamlConfig, error) {
 	if config.Primary.IsReplica {
 		for _, replica := range config.Replicas {
 			rHost := replica.Host
-			rUser := replica.USer
+			rUser := replica.User
+			// if no user specified, use default used
+			if rUser == "" {
+				rUser = User
+			}
 			fmt.Printf("Checking Connectivity of the replica %s ...", rHost)
 			host, port := getHostPort(rHost)
 			client, err := connectToHost(rUser, host, port)
