@@ -79,28 +79,29 @@ func main() {
 		os.Exit(1)
 
 	}
-	cfg, err = checkConnectivity(cfg)
-	if err != nil {
-		fmt.Printf("%v", err)
-		os.Exit(1)
-	}
-	currentVersion, err := version.NewVersion(gerInstalledVersion(cfg.Primary.Client))
+	// Verify user input and fill default options
+	verifyConfigOption(cfg)
+	// check connectivity and get clients
+	cfg = setupSSHClient(cfg)
+	// get GHE version installed on server & verify it's the same on Primary and replicas
+	currentVersion, _ := version.NewVersion(gerInstalledVersion(cfg.Primary.Client))
 	if cfg.Primary.IsReplica {
 		checkPrimaryReplicasVersion(cfg, currentVersion)
 	}
 	// Verify Target version with the current installed version
 	if currentVersion.GreaterThanOrEqual(targetVersion) {
 		fmt.Printf("Target Version %s is less than Current installed version %s", targetVersion, currentVersion)
-	} else {
-		currentVersionSegment := currentVersion.Segments()
-		targetVersionSegment := targetVersion.Segments()
-
-		if (targetVersionSegment[0] > currentVersionSegment[0]) || (targetVersionSegment[1] > currentVersionSegment[1]) {
-			// TODO: upgrade here
-		} else {
-			// TODO: Patch here
-		}
+		os.Exit(1)
 	}
+	currentVersionSegment := currentVersion.Segments()
+	targetVersionSegment := targetVersion.Segments()
+
+	if (targetVersionSegment[0] > currentVersionSegment[0]) || (targetVersionSegment[1] > currentVersionSegment[1]) {
+		// TODO: upgrade here
+	} else {
+		// TODO: Patch here
+	}
+
 }
 
 func connectToHost(user, host, port string) (*ssh.Client, error) {
@@ -205,16 +206,6 @@ func closeConnection(client *ssh.Client) {
 	client.Close()
 }
 
-func getHostPort(mHost string) (host, port string) {
-	h, p, err := net.SplitHostPort(mHost)
-	// No port is specified
-	if err != nil {
-		h = mHost
-		p = Port
-	}
-	return h, p
-}
-
 // Since we need to read version from output, we separate it from the general method
 // by using a Buffer to capture generated output from the method and parse it to get
 // the installed version
@@ -297,7 +288,7 @@ func getPackageName(versionArray []int) string {
 	return pkgName
 }
 
-func checkConnectivity(config YamlConfig) (YamlConfig, error) {
+func setupSSHClient(config YamlConfig) YamlConfig {
 	pHost := config.Primary.Host
 	pUser := config.Primary.User
 	// if no user specified, use default used
@@ -308,7 +299,8 @@ func checkConnectivity(config YamlConfig) (YamlConfig, error) {
 	host, port := getHostPort(pHost)
 	client, err := connectToHost(pUser, host, port)
 	if err != nil {
-		return config, fmt.Errorf("failed to connect to primary %s: %s", host, err)
+		fmt.Printf("failed to connect to primary %s: %s", host, err)
+		os.Exit(1)
 	}
 	config.Primary.Client = client
 	fmt.Println("Success")
@@ -324,13 +316,14 @@ func checkConnectivity(config YamlConfig) (YamlConfig, error) {
 			host, port := getHostPort(rHost)
 			client, err := connectToHost(rUser, host, port)
 			if err != nil {
-				return config, fmt.Errorf("failed to connect to replica %s ", host)
+				fmt.Printf("failed to connect to replica %s ", host)
+				os.Exit(1)
 			}
 			replica.Client = client
 			fmt.Println("Success")
 		}
 	}
-	return config, nil
+	return config
 }
 
 func checkPrimaryReplicasVersion(config YamlConfig, currentVersion *version.Version) {
@@ -350,6 +343,41 @@ func checkPrimaryReplicasVersion(config YamlConfig, currentVersion *version.Vers
 func getSupportedPlatforms() []string {
 	return []string{"hyperv", "kvm", "esx", "xen", "ami", "azure", "gce"}
 }
+
+func verifyConfigOption(config YamlConfig) YamlConfig {
+	// Set up default options for Prirmary
+	if config.Primary.Host == "" {
+		fmt.Printf("Primary host shouldn't be empty")
+		os.Exit(1)
+	}
+	// If user not specified, switch to default user
+	if config.Primary.User == "" {
+		config.Primary.User = User
+	}
+	if config.Primary.IsReplica {
+		for i, replica := range config.Replicas {
+			if replica.Host == "" {
+				fmt.Printf("Replica with indice %d host shouldn't be empty", i)
+				os.Exit(1)
+			}
+			if replica.User == "" {
+				replica.User = User
+			}
+		}
+	}
+	return config
+}
+
+func getHostPort(mHost string) (host, port string) {
+	h, p, err := net.SplitHostPort(mHost)
+	// No port is specified, default is 22
+	if err != nil {
+		h = mHost
+		p = Port
+	}
+	return h, p
+}
+
 func exist(a []string, x string) bool {
 	for _, n := range a {
 		if x == n {
