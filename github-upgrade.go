@@ -52,7 +52,9 @@ func main() {
 	userversion := flag.String("v", "", "GHE version")
 	platform := flag.String("p", "esx", "Platform your Github Entreprise is running on")
 	sshConfigPath = flag.String("ssh-config", filepath.Join(os.Getenv("HOME"), ".ssh"), "SSH keys folder path")
+	dryRun := flag.Bool("dry-run", false, "If true, only print how teh execution looks like, without running it.")
 	flag.Parse()
+
 	// Cast the new version
 	targetVersion, err := version.NewVersion(*userversion)
 	if err != nil {
@@ -251,19 +253,23 @@ func downloadUpgradeURL(version []int, platform string) string {
 	return githubUpgradeURL
 }
 
-func performHotPath(client *ssh.Client, version []int) {
+func performHotPath(client *ssh.Client, version []int, dryRun bool) {
 	pkgName := getPackageName(version)
 	patchURL := downloadPatchURL(version)
 	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
 	updateCmd := "cd /tmp && ghe-upgrade -y " + pkgName
 
 	fmt.Println("downloading package " + pkgName)
-	executeCmd(client, downloadPkgCmd)
+	if !dryRun {
+		executeCmd(client, downloadPkgCmd)
+	}
 	fmt.Println("Install the package" + pkgName)
-	executeCmd(client, updateCmd)
+	if !dryRun {
+		executeCmd(client, updateCmd)
+	}
 }
 
-func performUpgrade(client *ssh.Client, version []int, platform string) {
+func performUpgrade(client *ssh.Client, version []int, platform string, dryRun bool) {
 	pkgName := getPackageName(version)
 	patchURL := downloadUpgradeURL(version, platform)
 	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
@@ -273,15 +279,25 @@ func performUpgrade(client *ssh.Client, version []int, platform string) {
 	updateCmd := "cd /tmp && ghe-upgrade -y " + pkgName
 
 	fmt.Println("downloading package " + pkgName)
-	executeCmd(client, downloadPkgCmd)
+	if !dryRun {
+		executeCmd(client, downloadPkgCmd)
+	}
 	fmt.Println("Set maintenance mode")
-	executeCmd(client, maintenanceCmd)
+	if !dryRun {
+		executeCmd(client, maintenanceCmd)
+	}
 	fmt.Println("Stop the replication")
-	executeCmd(client, stopReplicationCmd)
+	if !dryRun {
+		executeCmd(client, stopReplicationCmd)
+	}
 	fmt.Println("Install the package" + pkgName)
-	executeCmd(client, updateCmd)
+	if !dryRun {
+		executeCmd(client, updateCmd)
+	}
 	fmt.Println("Remove the maintenance mode")
-	executeCmd(client, removeMaintenanceCmd)
+	if !dryRun {
+		executeCmd(client, removeMaintenanceCmd)
+	}
 }
 
 func getPackageName(versionArray []int) string {
