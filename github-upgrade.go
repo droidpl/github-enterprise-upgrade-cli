@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"time"
 
 	"net"
 	"os"
@@ -39,9 +40,10 @@ type YamlConfig struct {
 
 // Constants
 const (
-	Port       = "22"
-	User       = "root"
-	GTHVersion = "ghe-version"
+	DefaultPort    = "22"
+	DefaultUser    = "root"
+	GTHVersion     = "ghe-version"
+	RebootWaitTime = 60 // should be in seconds
 )
 
 var sshConfigPath *string
@@ -93,18 +95,36 @@ func main() {
 	}
 	// Verify Target version with the current installed version
 	if currentVersion.GreaterThanOrEqual(targetVersion) {
-		fmt.Printf("Target Version %s is less than Current installed version %s", targetVersion, currentVersion)
+		fmt.Printf("Target Version (%s) should be greater than the Current installed version (%s)", targetVersion, currentVersion)
 		os.Exit(1)
 	}
 	currentVersionSegment := currentVersion.Segments()
 	targetVersionSegment := targetVersion.Segments()
 
 	if (targetVersionSegment[0] > currentVersionSegment[0]) || (targetVersionSegment[1] > currentVersionSegment[1]) {
-		// TODO: upgrade here
+		performUpgrade(cfg.Primary.Client, targetVersionSegment, *platform, cfg.Primary.IsReplica, *dryRun)
+		// server reboot, we need to open new connection to disable maintenance mode
+		cfg.Primary.Client = refreshSSHClients(cfg.Primary.Host, cfg.Primary.User)
+		removeMaintenanceMode(cfg.Primary.Client, *dryRun)
+		// check if replica and perform individual upgrades on them
+		if cfg.Primary.IsReplica {
+			for _, replica := range cfg.Replicas {
+				performUpgrade(replica.Client, targetVersionSegment, *platform, false, *dryRun)
+				// server reboot, we need to open new connection to disable maintenance mode
+				replica.Client = refreshSSHClients(replica.Host, replica.User)
+				removeMaintenanceMode(replica.Client, *dryRun)
+			}
+		}
 	} else {
-		// TODO: Patch here
+		performHotPath(cfg.Primary.Client, targetVersionSegment, *dryRun)
+		// check if replica and perform individual patchs on them
+		if cfg.Primary.IsReplica {
+			for _, replica := range cfg.Replicas {
+				performHotPath(replica.Client, targetVersionSegment, *dryRun)
+			}
+		}
 	}
-
+	fmt.Println("The current installed version of Github Entreprise is " + gerInstalledVersion(cfg.Primary.Client))
 }
 
 func connectToHost(user, host, port string) (*ssh.Client, error) {
@@ -207,8 +227,10 @@ func executeCmd(client *ssh.Client, cmd string) error {
 
 func closeConnection(config YamlConfig) {
 	config.Primary.Client.Close()
-	for _, replica := range config.Replicas {
-		replica.Client.Close()
+	if config.Primary.IsReplica {
+		for _, replica := range config.Replicas {
+			replica.Client.Close()
+		}
 	}
 }
 
@@ -238,23 +260,21 @@ func gerInstalledVersion(client *ssh.Client) string {
 func downloadPatchURL(version []int) string {
 	githubPatchURL := "https://github-enterprise.s3.amazonaws.com/hotpatch/"
 	githubPatchURL += strconv.Itoa(version[0]) + "." + strconv.Itoa(version[1])
-	githubPatchURL += "/" + getPackageName(version)
-
+	githubPatchURL += "/" + getPackageName(version, "")
 	return githubPatchURL
 }
 
 func downloadUpgradeURL(version []int, platform string) string {
 	githubUpgradeURL := "https://github-enterprise.s3.amazonaws.com/"
-	githubUpgradeURL += "/" + platform
-	githubUpgradeURL += "/updates/github-enterprise" + platform
-	githubUpgradeURL += strconv.Itoa(version[0]) + "." + strconv.Itoa(version[1])
-	githubUpgradeURL += "/" + getPackageName(version)
+	githubUpgradeURL += platform
+	githubUpgradeURL += "/updates/"
+	githubUpgradeURL += getPackageName(version, platform)
 
 	return githubUpgradeURL
 }
 
 func performHotPath(client *ssh.Client, version []int, dryRun bool) {
-	pkgName := getPackageName(version)
+	pkgName := getPackageName(version, "")
 	patchURL := downloadPatchURL(version)
 	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
 	updateCmd := "cd /tmp && ghe-upgrade -y " + pkgName
@@ -263,84 +283,62 @@ func performHotPath(client *ssh.Client, version []int, dryRun bool) {
 	if !dryRun {
 		executeCmd(client, downloadPkgCmd)
 	}
-	fmt.Println("Install the package" + pkgName)
+	fmt.Println("Installing the package " + pkgName)
 	if !dryRun {
 		executeCmd(client, updateCmd)
 	}
 }
 
-func performUpgrade(client *ssh.Client, version []int, platform string, dryRun bool) {
-	pkgName := getPackageName(version)
+func performUpgrade(client *ssh.Client, version []int, platform string, isReplica bool, dryRun bool) {
+	pkgName := getPackageName(version, platform)
 	patchURL := downloadUpgradeURL(version, platform)
 	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
 	maintenanceCmd := "ghe-maintenance -s"
 	stopReplicationCmd := "ghe-repl-stop"
-	removeMaintenanceCmd := "ghe-maintenance -u"
 	updateCmd := "cd /tmp && ghe-upgrade -y " + pkgName
 
 	fmt.Println("downloading package " + pkgName)
 	if !dryRun {
-		executeCmd(client, downloadPkgCmd)
+		executeCmdFailOnError(client, downloadPkgCmd)
 	}
-	fmt.Println("Set maintenance mode")
+
+	fmt.Println("Setting maintenance mode")
 	if !dryRun {
-		executeCmd(client, maintenanceCmd)
+		executeCmdFailOnError(client, maintenanceCmd)
 	}
-	fmt.Println("Stop the replication")
-	if !dryRun {
-		executeCmd(client, stopReplicationCmd)
+
+	fmt.Println("Stoping the replication")
+	if !dryRun && isReplica {
+		executeCmdFailOnError(client, stopReplicationCmd)
 	}
-	fmt.Println("Install the package" + pkgName)
+
+	fmt.Println("Installing the package" + pkgName)
 	if !dryRun {
 		executeCmd(client, updateCmd)
 	}
-	fmt.Println("Remove the maintenance mode")
-	if !dryRun {
-		executeCmd(client, removeMaintenanceCmd)
-	}
 }
 
-func getPackageName(versionArray []int) string {
+func getPackageName(versionArray []int, platform string) string {
 	version := strings.Trim(strings.Replace(fmt.Sprint(versionArray), " ", ".", -1), "[]")
 	var pkgName = "github-enterprise-"
+	if platform != "" {
+		pkgName += platform + "-"
+	}
 	pkgName += version
-	pkgName += ".hpkg"
+	if platform != "" {
+		pkgName += ".pkg"
+	} else {
+		pkgName += ".hpkg"
+	}
 	return pkgName
 }
 
 func setupSSHClient(config YamlConfig) YamlConfig {
-	pHost := config.Primary.Host
-	pUser := config.Primary.User
-	// if no user specified, use default used
-	if pUser == "" {
-		pUser = User
-	}
-	fmt.Printf("Checking Connectivity of the primary %s ...", pHost)
-	host, port := getHostPort(pHost)
-	client, err := connectToHost(pUser, host, port)
-	if err != nil {
-		fmt.Printf("failed to connect to primary %s: %s", host, err)
-		os.Exit(1)
-	}
-	config.Primary.Client = client
+	config.Primary.Client = getSSHClient(config.Primary.Host, config.Primary.User)
 	fmt.Println("Success")
 	if config.Primary.IsReplica {
 		for _, replica := range config.Replicas {
-			rHost := replica.Host
-			rUser := replica.User
-			// if no user specified, use default used
-			if rUser == "" {
-				rUser = User
-			}
-			fmt.Printf("Checking Connectivity of the replica %s ...", rHost)
-			host, port := getHostPort(rHost)
-			client, err := connectToHost(rUser, host, port)
-			if err != nil {
-				fmt.Printf("failed to connect to replica %s ", host)
-				os.Exit(1)
-			}
-			replica.Client = client
-			fmt.Println("Success")
+			replica.Client = getSSHClient(replica.Host, replica.User)
 		}
 	}
 	return config
@@ -365,14 +363,14 @@ func getSupportedPlatforms() []string {
 }
 
 func verifyConfigOption(config YamlConfig) YamlConfig {
-	// Set up default options for Prirmary
+	// Set up default options for Primary
 	if config.Primary.Host == "" {
 		fmt.Printf("Primary host shouldn't be empty")
 		os.Exit(1)
 	}
 	// If user not specified, switch to default user
 	if config.Primary.User == "" {
-		config.Primary.User = User
+		config.Primary.User = DefaultUser
 	}
 	if config.Primary.IsReplica {
 		for i, replica := range config.Replicas {
@@ -381,7 +379,7 @@ func verifyConfigOption(config YamlConfig) YamlConfig {
 				os.Exit(1)
 			}
 			if replica.User == "" {
-				replica.User = User
+				replica.User = DefaultUser
 			}
 		}
 	}
@@ -393,7 +391,7 @@ func getHostPort(mHost string) (host, port string) {
 	// No port is specified, default is 22
 	if err != nil {
 		h = mHost
-		p = Port
+		p = DefaultPort
 	}
 	return h, p
 }
@@ -405,4 +403,46 @@ func exist(a []string, x string) bool {
 		}
 	}
 	return false
+}
+
+func removeMaintenanceMode(client *ssh.Client, dryRun bool) {
+	removeMaintenanceCmd := "ghe-maintenance -u"
+	if !dryRun {
+		fmt.Println("disabling maintenance mode")
+		for {
+			err := executeCmd(client, removeMaintenanceCmd)
+			if err != nil {
+				fmt.Println("... Retrying in 10s")
+				time.Sleep(10 * time.Second)
+			} else {
+				break
+			}
+		}
+
+	}
+}
+
+func getSSHClient(fullHost, user string) *ssh.Client {
+	fmt.Printf("Checking Connectivity of the primary %s ...", fullHost)
+	host, port := getHostPort(fullHost)
+	client, err := connectToHost(user, host, port)
+	if err != nil {
+		fmt.Printf("failed to connect to primary %s: %s", host, err)
+		os.Exit(1)
+	}
+	return client
+}
+
+func refreshSSHClients(host, user string) *ssh.Client {
+	fmt.Println("Server is rebooting! Sleeping for 60s")
+	time.Sleep(RebootWaitTime * time.Second)
+	return getSSHClient(host, user)
+}
+
+func executeCmdFailOnError(client *ssh.Client, cmd string) {
+	err := executeCmd(client, cmd)
+	if err != nil {
+		fmt.Printf("An error happened while executing command %v", err)
+		os.Exit(1)
+	}
 }
