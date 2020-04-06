@@ -89,7 +89,7 @@ func main() {
 	cfg = setupSSHClient(cfg)
 	defer closeConnection(cfg)
 	// get GHE version installed on server & verify it's the same on Primary and replicas
-	currentVersion, _ := version.NewVersion(gerInstalledVersion(cfg.Primary.Client))
+	currentVersion, _ := version.NewVersion(getInstalledVersion(cfg.Primary.Client))
 	if cfg.Primary.IsReplica {
 		checkPrimaryReplicasVersion(cfg, currentVersion)
 	}
@@ -102,6 +102,7 @@ func main() {
 	targetVersionSegment := targetVersion.Segments()
 
 	if (targetVersionSegment[0] > currentVersionSegment[0]) || (targetVersionSegment[1] > currentVersionSegment[1]) {
+		fmt.Println("Upgrading Primary server " + cfg.Primary.Host)
 		performUpgrade(cfg.Primary.Client, targetVersionSegment, *platform, cfg.Primary.IsReplica, *dryRun)
 		// server reboot, we need to open new connection to disable maintenance mode
 		cfg.Primary.Client = refreshSSHClients(cfg.Primary.Host, cfg.Primary.User)
@@ -109,22 +110,29 @@ func main() {
 		// check if replica and perform individual upgrades on them
 		if cfg.Primary.IsReplica {
 			for _, replica := range cfg.Replicas {
-				performUpgrade(replica.Client, targetVersionSegment, *platform, false, *dryRun)
-				// server reboot, we need to open new connection to disable maintenance mode
-				replica.Client = refreshSSHClients(replica.Host, replica.User)
-				removeMaintenanceMode(replica.Client, *dryRun)
+				if replica.IsActive {
+					fmt.Println("Upgrading Replica server " + replica.Host)
+					performUpgrade(replica.Client, targetVersionSegment, *platform, false, *dryRun)
+					// server reboot, we need to open new connection to disable maintenance mode
+					replica.Client = refreshSSHClients(replica.Host, replica.User)
+					removeMaintenanceMode(replica.Client, *dryRun)
+				}
 			}
 		}
 	} else {
+		fmt.Println("Upgrading Primary server " + cfg.Primary.Host)
 		performHotPath(cfg.Primary.Client, targetVersionSegment, *dryRun)
 		// check if replica and perform individual patchs on them
 		if cfg.Primary.IsReplica {
 			for _, replica := range cfg.Replicas {
-				performHotPath(replica.Client, targetVersionSegment, *dryRun)
+				if replica.IsActive {
+					fmt.Println("Upgrading Replica server " + replica.Host)
+					performHotPath(replica.Client, targetVersionSegment, *dryRun)
+				}
 			}
 		}
 	}
-	fmt.Println("The current installed version of Github Entreprise is " + gerInstalledVersion(cfg.Primary.Client))
+	fmt.Println("The current installed version of Github Entreprise is " + getInstalledVersion(cfg.Primary.Client))
 }
 
 func connectToHost(user, host, port string) (*ssh.Client, error) {
@@ -229,7 +237,9 @@ func closeConnection(config YamlConfig) {
 	config.Primary.Client.Close()
 	if config.Primary.IsReplica {
 		for _, replica := range config.Replicas {
-			replica.Client.Close()
+			if replica.IsActive {
+				replica.Client.Close()
+			}
 		}
 	}
 }
@@ -237,7 +247,7 @@ func closeConnection(config YamlConfig) {
 // Since we need to read version from output, we separate it from the general method
 // by using a Buffer to capture generated output from the method and parse it to get
 // the installed version
-func gerInstalledVersion(client *ssh.Client) string {
+func getInstalledVersion(client *ssh.Client) string {
 	const (
 		GTHVersionCmd = "ghe-version"
 		semverRegex   = "([0-9]+)(\\.[0-9]+)?(\\.[0-9]+)"
@@ -337,8 +347,11 @@ func setupSSHClient(config YamlConfig) YamlConfig {
 	config.Primary.Client = getSSHClient(config.Primary.Host, config.Primary.User)
 	fmt.Println("Success")
 	if config.Primary.IsReplica {
-		for _, replica := range config.Replicas {
-			replica.Client = getSSHClient(replica.Host, replica.User)
+		for i, replica := range config.Replicas {
+			if replica.IsActive {
+				config.Replicas[i].Client = getSSHClient(replica.Host, replica.User)
+				fmt.Println("Success")
+			}
 		}
 	}
 	return config
@@ -347,12 +360,14 @@ func setupSSHClient(config YamlConfig) YamlConfig {
 func checkPrimaryReplicasVersion(config YamlConfig, currentVersion *version.Version) {
 	fmt.Println("Comparing Replicas GHE version to primary. Current version is " + currentVersion.String())
 	for _, replica := range config.Replicas {
-		rHost := replica.Host
-		replicaVersion, _ := version.NewVersion(gerInstalledVersion(replica.Client))
-		if !currentVersion.Equal(currentVersion) {
-			// fail and exit
-			fmt.Printf("Replica %v does not have the same version as primary! Current version is %v", rHost, replicaVersion.String())
-			os.Exit(1)
+		if replica.IsActive {
+			rHost := replica.Host
+			replicaVersion, _ := version.NewVersion(getInstalledVersion(replica.Client))
+			if !currentVersion.Equal(currentVersion) {
+				// fail and exit
+				fmt.Printf("Replica %v does not have the same version as primary! Current version is %v", rHost, replicaVersion.String())
+				os.Exit(1)
+			}
 		}
 	}
 	fmt.Println("Success! Primary and replicas have the same version")

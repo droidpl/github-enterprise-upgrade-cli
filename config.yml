@@ -1,9 +1,9 @@
 primary:
-   host: 35.187.64.171:122
+   host: 34.76.34.140:122
    user: admin
-   replication_enabled: false
+   replication_enabled: yes
 replicas:
-   - host: 88.99.195.170:22
-     user: root
-     active: false
+   - host: 35.187.64.171:122
+     user: admin
+     active: yes
      datacenter: "somedata"
