@@ -109,16 +109,18 @@ func main() {
 		removeMaintenanceMode(cfg.Primary.Client, *dryRun)
 		// check if replica and perform individual upgrades on them
 		if cfg.Primary.IsReplica {
-			for _, replica := range cfg.Replicas {
+			for i, replica := range cfg.Replicas {
 				if replica.IsActive {
 					fmt.Println("Upgrading Replica server " + replica.Host)
 					performUpgrade(replica.Client, targetVersionSegment, *platform, false, *dryRun)
 					// server reboot, we need to open new connection to disable maintenance mode
-					replica.Client = refreshSSHClients(replica.Host, replica.User)
-					removeMaintenanceMode(replica.Client, *dryRun)
+					cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User)
+					removeMaintenanceMode(cfg.Replicas[i].Client, *dryRun)
 				}
 			}
 		}
+		// Enabling again replication
+		enableRreplication(cfg, *dryRun)
 	} else {
 		fmt.Println("Upgrading Primary server " + cfg.Primary.Host)
 		performHotPath(cfg.Primary.Client, targetVersionSegment, *dryRun)
@@ -459,5 +461,28 @@ func executeCmdFailOnError(client *ssh.Client, cmd string) {
 	if err != nil {
 		fmt.Printf("An error happened while executing command %v", err)
 		os.Exit(1)
+	}
+}
+
+func enableRreplication(config YamlConfig, dryRun bool) {
+	replSetupCmd := "ghe-repl-setup " + config.Primary.Host
+	startReplCmd := "ghe-repl-start"
+	replStatusCmd := "ghe-repl-status"
+
+	for _, replica := range config.Replicas {
+		fmt.Println("Configuring the replica ")
+		if !dryRun {
+			executeCmdFailOnError(replica.Client, replSetupCmd)
+		}
+
+		fmt.Println("Starting the replica ")
+		if !dryRun {
+			executeCmdFailOnError(replica.Client, startReplCmd)
+		}
+
+		fmt.Println("Replica Status")
+		if !dryRun {
+			executeCmdFailOnError(replica.Client, replStatusCmd)
+		}
 	}
 }
