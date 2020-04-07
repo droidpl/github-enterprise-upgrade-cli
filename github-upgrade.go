@@ -432,7 +432,7 @@ func executeCmdFailOnError(client *ssh.Client, cmd string) {
 
 func enableRreplication(config YamlConfig, dryRun bool) {
 	primary, _ := getHostPort(config.Primary.Host)
-	replSetupCmd := fmt.Sprintf("ghe-repl-setup %s", primary)
+	replSetupCmd := fmt.Sprintf("echo y | ghe-repl-setup %s", primary)
 	startReplCmd := "ghe-repl-start"
 	replStatusCmd := "ghe-repl-status"
 
