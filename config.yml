@@ -1,5 +1,5 @@
 primary:
-   host: 34.76.33.162:122
+   host: 35.205.205.183:122
    user: admin
    replication_enabled: false
 replicas:

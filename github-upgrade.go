@@ -453,24 +453,45 @@ func enableRreplication(config YamlConfig, dryRun bool) {
 	}
 }
 
-// force
+/**
+ When the server reboot after an upgrade, the host ke changes and thus cannot open an SSH connection
+ My approach was to run `ssh-keygen -R -p <port> <host> -f <known_hosts_file>` to remove current host entry
+ and then run `ssh-keyscan -t ecdsa -p <port> <host>` ti get the new ssh keys
+ and then, and only then append the new entry on the known_hosts file
+**/
 func sshKeyScan(host string) {
 	sshKH := filepath.Join(*sshConfigPath, "known_hosts")
 	h, p := getHostPort(host)
-	updateKHCmd := fmt.Sprintf("ssh-keyscan -t ecdsa -p %s %s >> %s", p, h, sshKH)
 	log.Println("--> Refresh host keys for host " + h)
 	execCmdHost("cat", sshKH)
 	execCmdHost("ssh-keygen", "-R", fmt.Sprintf("[%s]:%s", h, p), "-f", sshKH)
-	execCmdHost("/bin/bash", "-C", updateKHCmd)
+	hk := execCmdHost("ssh-keyscan", "-t", "ecdsa", "-p", p, h)
+	appendOnFile(sshKH, hk)
 }
 
-func execCmdHost(scmd string, arg ...string) {
+func execCmdHost(scmd string, arg ...string) string {
 	cmd := exec.Command(scmd, arg...)
 	log.Printf("command to execute %v", cmd)
-	cmd.Stdout = os.Stdout
+	var out bytes.Buffer
+	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
 	if err != nil {
 		log.Fatalf("Connot execute Command On host: %v", err)
+	}
+	log.Println(out.String())
+	return out.String()
+}
+
+func appendOnFile(file, text string) {
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	defer f.Close()
+
+	if _, err = f.WriteString(text); err != nil {
+		log.Fatalf("%v", err)
 	}
 }
