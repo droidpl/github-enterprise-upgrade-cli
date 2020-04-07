@@ -390,8 +390,8 @@ func exist(a []string, x string) bool {
 
 func removeMaintenanceMode(client *ssh.Client, dryRun bool) {
 	removeMaintenanceCmd := "ghe-maintenance -u"
+	log.Println("-->  Disabling maintenance mode")
 	if !dryRun {
-		log.Println("-->  Disabling maintenance mode")
 		for {
 			err := executeCmd(client, removeMaintenanceCmd)
 			if err != nil {
@@ -401,8 +401,9 @@ func removeMaintenanceMode(client *ssh.Client, dryRun bool) {
 				break
 			}
 		}
-
 	}
+	log.Println("-->  Maintenance mode disabled!")
+
 }
 
 func getSSHClient(fullHost, user string) *ssh.Client {
