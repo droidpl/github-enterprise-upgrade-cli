@@ -58,6 +58,7 @@ func main() {
 	platform := flag.String("p", "esx", "Platform your Github Entreprise is running on")
 	sshConfigPath = flag.String("ssh-config", filepath.Join(os.Getenv("HOME"), ".ssh"), "SSH keys folder path")
 	dryRun := flag.Bool("dry-run", false, "If true, only print how teh execution looks like, without running it.")
+	refreshHostSSHKeys := flag.Bool("update-host-keys", false, "Grep new SSH host keys from the machine after rebooting the server, especially for upgrade")
 	flag.Parse()
 
 	// Cast the new version
@@ -104,7 +105,7 @@ func main() {
 		log.Println("--> Upgrading Primary server " + cfg.Primary.Host)
 		performUpgrade(cfg.Primary.Client, targetVersionSegment, *platform, false, *dryRun)
 		// server reboot, we need to open new connection to disable maintenance mode
-		cfg.Primary.Client = refreshSSHClients(cfg.Primary.Host, cfg.Primary.User)
+		cfg.Primary.Client = refreshSSHClients(cfg.Primary.Host, cfg.Primary.User, *refreshHostSSHKeys)
 		removeMaintenanceMode(cfg.Primary.Client, *dryRun)
 		// check if replica and perform individual upgrades on them
 		if cfg.Primary.IsReplica {
@@ -113,7 +114,7 @@ func main() {
 					log.Println("--> Upgrading Replica server " + replica.Host)
 					performUpgrade(replica.Client, targetVersionSegment, *platform, true, *dryRun)
 					// server reboot, we need to open new connection to disable maintenance mode
-					cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User)
+					cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, *refreshHostSSHKeys)
 					removeMaintenanceMode(cfg.Replicas[i].Client, *dryRun)
 				}
 			}
@@ -415,11 +416,12 @@ func getSSHClient(fullHost, user string) *ssh.Client {
 	return client
 }
 
-func refreshSSHClients(host, user string) *ssh.Client {
+func refreshSSHClients(host, user string, updateSSHHostKeys bool) *ssh.Client {
 	log.Println("--> Server is rebooting! Sleeping for 60s")
 	time.Sleep(RebootWaitTime * time.Second)
-	// TODO: Make it optional and enabled when the force key refresh is enabled
-	//sshKeyScan(host)
+	if updateSSHHostKeys {
+		sshKeyScan(host)
+	}
 	return getSSHClient(host, user)
 }
 

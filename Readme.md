@@ -7,12 +7,16 @@ Script options are:
   -config string
         Configuration file (default "config.yml")
   -p string
-        Platform your Github Entreprise is running on (default "esx")
+        Platform your Github Enterprise is running on (default "esx")
         supported platforms are: "hyperv", "kvm", "esx", "xen", "ami", "azure", "gce"
   -ssh-config string
         SSH keys folder path (default "~/.ssh")
   -v string
         GHE version
+  -dry-run boolean
+        If true, only print how teh execution looks like, without running it.
+  -update-host-keys boolean
+        Grep new SSH host keys from the machine after rebooting the server, especially for upgrade
 ```
 
 The configuration file, is a yaml file that describe how to connect to the instances:
