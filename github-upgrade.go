@@ -403,7 +403,6 @@ func removeMaintenanceMode(client *ssh.Client, dryRun bool) {
 		}
 	}
 	log.Println("-->  Maintenance mode disabled!")
-
 }
 
 func getSSHClient(fullHost, user string) *ssh.Client {
@@ -419,7 +418,8 @@ func getSSHClient(fullHost, user string) *ssh.Client {
 func refreshSSHClients(host, user string) *ssh.Client {
 	log.Println("--> Server is rebooting! Sleeping for 60s")
 	time.Sleep(RebootWaitTime * time.Second)
-	sshKeyScan(host)
+	// TODO: Make it optional and enabled when the force key refresh is enabled
+	//sshKeyScan(host)
 	return getSSHClient(host, user)
 }
 
