@@ -43,10 +43,11 @@ type YamlConfig struct {
 
 // Constants
 const (
-	DefaultPort    = "22"
-	DefaultUser    = "root"
-	GTHVersion     = "ghe-version"
-	RebootWaitTime = 60 // should be in seconds
+	DefaultPort     = "22"
+	DefaultUser     = "root"
+	GTHVersion      = "ghe-version"
+	RebootWaitTime  = 60 // should be in seconds
+	retriesWaitTime = 15 // Time to wait before checking if the config finished
 )
 
 var sshConfigPath *string
@@ -224,19 +225,10 @@ func getInstalledVersion(client *ssh.Client) string {
 		GTHVersionCmd = "ghe-version"
 		semverRegex   = "([0-9]+)(\\.[0-9]+)?(\\.[0-9]+)"
 	)
-	// Create session
-	session, err := client.NewSession()
-	if err != nil {
-		log.Printf("Failed to open SSH Session: %v", err)
-	}
-	var buffer bytes.Buffer
-	session.Stdout = &buffer
-
-	if err := session.Run(GTHVersionCmd); err != nil {
-		log.Printf("Failed to run: %v", err)
-	}
+	// Don't ignore connad errors
+	output := executeCmdAndReturnBuffer(client, GTHVersionCmd, false)
 	re := regexp.MustCompile(semverRegex)
-	return re.FindString(buffer.String())
+	return re.FindString(output)
 }
 
 func downloadPatchURL(version []int) string {
@@ -393,25 +385,26 @@ func removeMaintenanceMode(client *ssh.Client, dryRun bool) {
 	removeMaintenanceCmd := "ghe-maintenance -u"
 	log.Println("-->  Disabling maintenance mode")
 	if !dryRun {
-		for {
-			err := executeCmd(client, removeMaintenanceCmd)
-			if err != nil {
-				log.Println("... Retrying in 10s")
-				time.Sleep(10 * time.Second)
+		ticker := time.NewTicker(retriesWaitTime * time.Second)
+		for range ticker.C {
+			isRunning, _ := isConfigInProgress(client)
+			if isRunning {
+				log.Printf("Configuration is still running... Retrying in %ds", retriesWaitTime)
 			} else {
 				break
 			}
 		}
+		executeCmd(client, removeMaintenanceCmd)
 	}
 	log.Println("-->  Maintenance mode disabled!")
 }
 
 func getSSHClient(fullHost, user string) *ssh.Client {
-	log.Printf("--> Checking Connectivity of the primary %s ...", fullHost)
+	log.Printf("--> Checking Connectivity of the server %s ...", fullHost)
 	host, port := getHostPort(fullHost)
 	client, err := connectToHost(user, host, port)
 	if err != nil {
-		log.Fatalf("failed to connect to primary %s: %s", host, err)
+		log.Fatalf("failed to connect to server %s: %s", host, err)
 	}
 	return client
 }
@@ -456,6 +449,31 @@ func enableRreplication(config YamlConfig, dryRun bool) {
 	}
 }
 
+// Execute command on the remote host using the provide client!
+// You can choose to ignore the errors of a command execution,
+// if ignored, the method will return the result of the execution, if not the script will fail and exit
+func executeCmdAndReturnBuffer(client *ssh.Client, cmd string, ignore bool) string {
+	// Create session
+	session, err := client.NewSession()
+	if err != nil {
+		log.Fatalf("Failed to open SSH Session: %v", err)
+	}
+	var buffer bytes.Buffer
+	session.Stdout = &buffer
+
+	if err := session.Run(cmd); err != nil && !ignore {
+		log.Fatalf("Failed to run %v", err)
+	}
+	return buffer.String()
+}
+
+func isConfigInProgress(client *ssh.Client) (bool, error) {
+	CheckCfgScript := "/usr/local/share/enterprise/ghe-config-in-progress"
+	// the script exit(3) and return false if no config are running, We ignore that and continue
+	isRunningStr := executeCmdAndReturnBuffer(client, CheckCfgScript, true)
+	return strconv.ParseBool(strings.TrimSuffix(isRunningStr, "\n"))
+}
+
 /**
  When the server reboot after an upgrade, the host ke changes and thus cannot open an SSH connection
  My approach was to run `ssh-keygen -R -p <port> <host> -f <known_hosts_file>` to remove current host entry
@@ -465,8 +483,7 @@ func enableRreplication(config YamlConfig, dryRun bool) {
 func sshKeyScan(host string) {
 	sshKH := filepath.Join(*sshConfigPath, "known_hosts")
 	h, p := getHostPort(host)
-	log.Println("--> Refresh host keys for host " + h)
-	execCmdHost("cat", sshKH)
+	log.Println("--> Refreshing host keys for host " + h)
 	execCmdHost("ssh-keygen", "-R", fmt.Sprintf("[%s]:%s", h, p), "-f", sshKH)
 	hk := execCmdHost("ssh-keyscan", "-t", "ecdsa", "-p", p, h)
 	appendOnFile(sshKH, hk)
@@ -474,7 +491,6 @@ func sshKeyScan(host string) {
 
 func execCmdHost(scmd string, arg ...string) string {
 	cmd := exec.Command(scmd, arg...)
-	log.Printf("command to execute %v", cmd)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
@@ -482,7 +498,6 @@ func execCmdHost(scmd string, arg ...string) string {
 	if err != nil {
 		log.Fatalf("Connot execute Command On host: %v", err)
 	}
-	log.Println(out.String())
 	return out.String()
 }
 
