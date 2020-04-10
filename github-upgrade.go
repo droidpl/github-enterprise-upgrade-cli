@@ -111,13 +111,11 @@ func main() {
 		// check if replica and perform individual upgrades on them
 		if cfg.Primary.IsReplica {
 			for i, replica := range cfg.Replicas {
-				if replica.IsActive {
-					log.Println("--> Upgrading Replica server " + replica.Host)
-					performUpgrade(replica.Client, targetVersionSegment, *platform, true, *dryRun)
-					// server reboot, we need to open new connection to disable maintenance mode
-					cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, *refreshHostSSHKeys)
-					removeMaintenanceMode(cfg.Replicas[i].Client, *dryRun)
-				}
+				log.Println("--> Upgrading Replica server " + replica.Host)
+				performUpgrade(replica.Client, targetVersionSegment, *platform, true, *dryRun)
+				// server reboot, we need to open new connection to disable maintenance mode
+				cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, *refreshHostSSHKeys)
+				removeMaintenanceMode(cfg.Replicas[i].Client, *dryRun)
 			}
 			// Enabling again replication
 			enableRreplication(cfg, *dryRun)
@@ -427,25 +425,47 @@ func executeCmdFailOnError(client *ssh.Client, cmd string) {
 
 func enableRreplication(config YamlConfig, dryRun bool) {
 	primary, _ := getHostPort(config.Primary.Host)
-	replSetupCmd := fmt.Sprintf("echo y | ghe-repl-setup %s", primary)
+	firstReplSetupCmd := fmt.Sprintf("echo y | ghe-repl-setup %s", primary)
+	replSetupCmd := fmt.Sprintf("echo y | ghe-repl-setup --add %s", primary)
 	startReplCmd := "ghe-repl-start"
 	replStatusCmd := "ghe-repl-status"
+	applyConfigCmd := "ghe-repl-status"
 
-	for _, replica := range config.Replicas {
+	for i, replica := range config.Replicas {
 		log.Println("--> Configuring the replica ")
 		if !dryRun {
-			executeCmdFailOnError(replica.Client, replSetupCmd)
+			// Check if its the first replica or not, to decide which command to run
+			if i == 0 {
+				executeCmdFailOnError(replica.Client, firstReplSetupCmd)
+			} else {
+				executeCmdFailOnError(replica.Client, replSetupCmd)
+			}
 		}
-
 		log.Println("--> Starting the replica ")
 		if !dryRun {
 			executeCmdFailOnError(replica.Client, startReplCmd)
 		}
-
-		log.Println("--> Replica Status")
 		if !dryRun {
 			executeCmdFailOnError(replica.Client, replStatusCmd)
 		}
+		if replica.Datacenter != "" {
+			log.Println("-->  Configure the replica for the specified datacenter: " + replica.Datacenter)
+			if !dryRun {
+				var datacenterCmd string
+				if replica.IsActive {
+					datacenterCmd = fmt.Sprintf("ghe-repl-node --active --datacenter %s", primary)
+				} else {
+					datacenterCmd = fmt.Sprintf("ghe-repl-node --inactive --datacenter %s", primary)
+				}
+				executeCmdFailOnError(replica.Client, datacenterCmd)
+			}
+		}
+
+	}
+
+	log.Println("--> Applying the configuration")
+	if !dryRun {
+		executeCmdFailOnError(config.Primary.Client, applyConfigCmd)
 	}
 }
 

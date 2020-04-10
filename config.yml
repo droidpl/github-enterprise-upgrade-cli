@@ -6,4 +6,3 @@ replicas:
    - host: 34.77.248.211:122
      user: admin
      active: true
-     datacenter: "somedata"
