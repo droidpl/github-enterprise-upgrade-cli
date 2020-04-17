@@ -2,8 +2,6 @@
 
 Command line tool, built with golang for automatic upgrade/patch of Github Entreprise. It support both single instance and multi replicas. 
 
-The source files are under `src` directory. An example of configuration file is available in `config.yml`. To build the application simply run `go build -o update-cli ./src`.
-
 Script options are:
 ```
   -config string
@@ -33,3 +31,6 @@ replicas:                        // list of replicas
      active: false               // is the replica active or not (default to false)
      datacenter: "somedata"      // datacenter name for georeplication (optional)
 ```
+
+### Build app
+The source files are under `src` directory. An example of configuration file is available in `config.yml`. To build the application simply run `go build -o update-cli ./src`.
