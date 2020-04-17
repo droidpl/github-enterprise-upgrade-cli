@@ -196,15 +196,6 @@ func getSupportedPlatforms() []string {
 	return []string{"hyperv", "kvm", "esx", "xen", "ami", "azure", "gce"}
 }
 
-func exist(a []string, x string) bool {
-	for _, n := range a {
-		if x == n {
-			return true
-		}
-	}
-	return false
-}
-
 func applyMaintenanceMode(client *ssh.Client, dryRun bool) {
 	maintenanceCmd := newCmdArgs("ghe-maintenance", "-s")
 	log.Println("--> Setting maintenance mode")
@@ -325,8 +316,4 @@ func isConfigInProgress(client *ssh.Client) (bool, error) {
 	// the script exit(3) and return false if no config are running, We ignore that and continue
 	isRunningStr := executeCmdAndReturnBuffer(client, CheckCfgScript, true)
 	return strconv.ParseBool(strings.TrimSuffix(isRunningStr, "\n"))
-}
-
-func concatCmds(cmds ...string) string {
-	return strings.Join(cmds, " && ")
 }
