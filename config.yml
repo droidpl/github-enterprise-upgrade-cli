@@ -1,7 +1,7 @@
 primary:
-   host: 35.195.130.108:122
+   host: 35.205.34.81:122
    user: admin
-   replication_enabled: true
+   replication_enabled: false
 replicas:
    - host: 35.187.46.196:122
      user: admin

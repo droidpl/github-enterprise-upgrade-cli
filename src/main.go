@@ -4,53 +4,28 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
-	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	kh "golang.org/x/crypto/ssh/knownhosts"
-
 	"github.com/hashicorp/go-version"
 	"golang.org/x/crypto/ssh"
-
-	"gopkg.in/yaml.v2"
 )
-
-// YamlConfig is exported.
-type YamlConfig struct {
-	Primary struct {
-		Host           string `yaml:"host"`
-		User           string `yaml:"user"`
-		ReplicaEnabled bool   `yaml:"replication_enabled"`
-		Client         *ssh.Client
-	} `yaml:"primary"`
-	Replicas []struct {
-		Host       string `yaml:"host"`
-		User       string `yaml:"user"`
-		IsActive   bool   `yaml:"active"`
-		Datacenter string `yaml:"datacenter"`
-		Client     *ssh.Client
-	} `yaml:"replicas"`
-}
 
 // Constants
 const (
-	DefaultPort     = "22"
-	DefaultUser     = "root"
-	GTHVersion      = "ghe-version"
-	RebootWaitTime  = 60 // should be in seconds
-	retriesWaitTime = 15 // Time to wait before checking if the config finished
+	RetriesWaitTime = 15 // Time to wait before checking if the config finished
+	SemverRegex     = "([0-9]+)(\\.[0-9]+)?(\\.[0-9]+)"
 )
 
-var sshConfigPath *string
+var (
+	// GHEVersion to get current GHE version
+	GHEVersion = newCmd("ghe-version")
+)
 
 func main() {
 	// read the options
@@ -72,21 +47,8 @@ func main() {
 	if !exist(supportedPlatforms, *platform) {
 		log.Fatalf("Unrecognized platforms %v, valid options are: %v", *platform, strings.Join(supportedPlatforms, ", "))
 	}
-	// Parse config file
-	f, err := os.Open(*configPath)
-	if err != nil {
-		log.Printf("Unable to Open Config file %v \n", err)
-	}
-	defer f.Close()
-	var cfg YamlConfig
-	decoder := yaml.NewDecoder(f)
-	err = decoder.Decode(&cfg)
-	if err != nil {
-		log.Fatalf("Something happened while reading the config file: %v \n", err)
-
-	}
-	// Verify user input and fill default options
-	verifyConfigOption(cfg)
+	// Read config file and verify input
+	cfg := mapConfig(*configPath)
 	// check connectivity and get clients
 	cfg = setupSSHClient(cfg)
 	defer closeConnection(cfg)
@@ -139,96 +101,13 @@ func main() {
 	log.Println("--> The current installed version of Github Entreprise is " + getInstalledVersion(cfg.Primary.Client))
 }
 
-func connectToHost(user, host, port string) (*ssh.Client, error) {
-	// A public key may be used to authenticate against the remote
-	// server by using an un-encrypted PEM-encoded private key file.
-	//
-	// If you have an encrypted private key, the crypto/x509 package
-	// can be used to decrypt it.
-	key, err := ioutil.ReadFile(filepath.Join(*sshConfigPath, "id_rsa"))
-	if err != nil {
-		return nil, fmt.Errorf("unable to read private key: %v", err)
-	}
-
-	// Create the Signer for this private key.
-	signer, err := ssh.ParsePrivateKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("unable to parse private key: %v", err)
-	}
-
-	hostKeyCallback, err := kh.New(filepath.Join(*sshConfigPath, "known_hosts"))
-	if err != nil {
-		return nil, fmt.Errorf("could not create hostkeycallback function: %v", err)
-	}
-	sshConfig := &ssh.ClientConfig{
-		User: user,
-		Auth: []ssh.AuthMethod{
-			// Use the PublicKeys method for remote authentication.
-			ssh.PublicKeys(signer),
-		},
-		HostKeyCallback: hostKeyCallback,
-	}
-
-	client, err := ssh.Dial("tcp", net.JoinHostPort(host, port), sshConfig)
-	if err != nil {
-		return nil, err
-	}
-	return client, nil
-}
-
-func executeCmd(client *ssh.Client, cmd string) error {
-	// Create session
-	session, err := client.NewSession()
-	if err != nil {
-		return fmt.Errorf("Failed to open SSH Session: %v", err)
-	}
-	defer session.Close()
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("Unable to setup stdin for session: %v", err)
-	}
-	go io.Copy(stdin, os.Stdin)
-
-	stdout, err := session.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("Unable to setup stdout for session: %v", err)
-	}
-	go io.Copy(os.Stdout, stdout)
-
-	stderr, err := session.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("Unable to setup stderr for session: %v", err)
-	}
-	go io.Copy(os.Stderr, stderr)
-
-	if err := session.Run(cmd); err != nil {
-		return fmt.Errorf("Failed to run: %v", err)
-	}
-	return nil
-}
-
-func closeConnection(config YamlConfig) {
-	config.Primary.Client.Close()
-	if config.Primary.ReplicaEnabled {
-		for _, replica := range config.Replicas {
-			if replica.IsActive {
-				replica.Client.Close()
-			}
-		}
-	}
-}
-
 // Since we need to read version from output, we separate it from the general method
 // by using a Buffer to capture generated output from the method and parse it to get
 // the installed version
 func getInstalledVersion(client *ssh.Client) string {
-	const (
-		GTHVersionCmd = "ghe-version"
-		semverRegex   = "([0-9]+)(\\.[0-9]+)?(\\.[0-9]+)"
-	)
 	// Don't ignore connad errors
-	output := executeCmdAndReturnBuffer(client, GTHVersionCmd, false)
-	re := regexp.MustCompile(semverRegex)
+	output := executeCmdAndReturnBuffer(client, GHEVersion.String(), false)
+	re := regexp.MustCompile(SemverRegex)
 	return re.FindString(output)
 }
 
@@ -250,34 +129,36 @@ func downloadUpgradeURL(version []int, platform string) string {
 
 func performHotPath(client *ssh.Client, version []int, dryRun bool) {
 	pkgName := getPackageName(version, "")
-	patchURL := downloadPatchURL(version)
-	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
-	updateCmd := "cd /tmp && ghe-upgrade -y " + pkgName
+	packageURL := downloadPatchURL(version)
+	upgradeCmd := newCmdArgs("ghe-upgrade", "-y", pkgName)
+	downloadPkgCmd := newCmdArgs("curl", "-L", "-O", packageURL)
+	cdCmd := newCmdArgs("cd", "/tmp")
 
 	log.Println("--> Downloading package " + pkgName)
 	if !dryRun {
-		executeCmdFailOnError(client, downloadPkgCmd)
+		executeCmdFailOnError(client, concatCmds(cdCmd.String(), downloadPkgCmd.String()))
 	}
 	log.Println("--> Installing the package " + pkgName)
 	if !dryRun {
-		executeCmdFailOnError(client, updateCmd)
+		executeCmdFailOnError(client, concatCmds(cdCmd.String(), upgradeCmd.String()))
 	}
 }
 
 func performUpgrade(client *ssh.Client, version []int, platform string, dryRun bool) {
 	pkgName := getPackageName(version, platform)
-	patchURL := downloadUpgradeURL(version, platform)
-	downloadPkgCmd := "cd /tmp && curl -L -O " + patchURL
-	updateCmd := "cd /tmp && ghe-upgrade -y " + pkgName
+	packageURL := downloadUpgradeURL(version, platform)
+	upgradeCmd := newCmdArgs("ghe-upgrade", "-y", pkgName)
+	downloadPkgCmd := newCmdArgs("curl", "-L", "-O", packageURL)
+	cdCmd := newCmdArgs("cd", "/tmp")
 
 	log.Println("--> Downloading package " + pkgName)
 	if !dryRun {
-		executeCmdFailOnError(client, downloadPkgCmd)
+		executeCmdFailOnError(client, concatCmds(cdCmd.String(), downloadPkgCmd.String()))
 	}
 
 	log.Println("--> Installing the package" + pkgName)
 	if !dryRun {
-		executeCmd(client, updateCmd)
+		executeCmd(client, concatCmds(cdCmd.String(), upgradeCmd.String()))
 	}
 }
 
@@ -294,20 +175,6 @@ func getPackageName(versionArray []int, platform string) string {
 		pkgName += ".hpkg"
 	}
 	return pkgName
-}
-
-func setupSSHClient(config YamlConfig) YamlConfig {
-	config.Primary.Client = getSSHClient(config.Primary.Host, config.Primary.User)
-	log.Println("Success")
-	if config.Primary.ReplicaEnabled {
-		for i, replica := range config.Replicas {
-			if replica.IsActive {
-				config.Replicas[i].Client = getSSHClient(replica.Host, replica.User)
-				log.Println("Success")
-			}
-		}
-	}
-	return config
 }
 
 func checkPrimaryReplicasVersion(config YamlConfig, currentVersion *version.Version) {
@@ -329,92 +196,32 @@ func getSupportedPlatforms() []string {
 	return []string{"hyperv", "kvm", "esx", "xen", "ami", "azure", "gce"}
 }
 
-func verifyConfigOption(config YamlConfig) YamlConfig {
-	// Set up default options for Primary
-	if config.Primary.Host == "" {
-		log.Fatal("Primary host shouldn't be empty")
-	}
-	// If user not specified, switch to default user
-	if config.Primary.User == "" {
-		config.Primary.User = DefaultUser
-	}
-	if config.Primary.ReplicaEnabled {
-		for i, replica := range config.Replicas {
-			if replica.Host == "" {
-				log.Fatalf("Replica with indice %d host shouldn't be empty", i)
-			}
-			if replica.User == "" {
-				replica.User = DefaultUser
-			}
-		}
-	}
-	return config
-}
-
-func getHostPort(mHost string) (host, port string) {
-	h, p, err := net.SplitHostPort(mHost)
-	// No port is specified, default is 22
-	if err != nil {
-		h = mHost
-		p = DefaultPort
-	}
-	return h, p
-}
-
-func exist(a []string, x string) bool {
-	for _, n := range a {
-		if x == n {
-			return true
-		}
-	}
-	return false
-}
-
 func applyMaintenanceMode(client *ssh.Client, dryRun bool) {
-	maintenanceCmd := "ghe-maintenance -s"
+	maintenanceCmd := newCmdArgs("ghe-maintenance", "-s")
 	log.Println("--> Setting maintenance mode")
 	if !dryRun {
-		executeCmdFailOnError(client, maintenanceCmd)
+		executeCmdFailOnError(client, maintenanceCmd.String())
 	}
 }
 func removeMaintenanceMode(client *ssh.Client, dryRun bool) {
-	removeMaintenanceCmd := "ghe-maintenance -u"
+	removeMaintenanceCmd := newCmdArgs("ghe-maintenance", "-u")
 	log.Println("--> Disabling maintenance mode")
-	executeCmd(client, removeMaintenanceCmd)
+	executeCmd(client, removeMaintenanceCmd.String())
 	log.Println("-->  Maintenance mode disabled!")
 }
 
 func waitCfgToFinish(client *ssh.Client, dryRun bool) {
 	if !dryRun {
-		ticker := time.NewTicker(retriesWaitTime * time.Second)
+		ticker := time.NewTicker(RetriesWaitTime * time.Second)
 		for range ticker.C {
 			isRunning, _ := isConfigInProgress(client)
 			if isRunning {
-				log.Printf("Configuration is still running... Retrying in %ds", retriesWaitTime)
+				log.Printf("Configuration is still running... Retrying in %ds", RetriesWaitTime)
 			} else {
 				break
 			}
 		}
 	}
-}
-
-func getSSHClient(fullHost, user string) *ssh.Client {
-	log.Printf("--> Checking Connectivity of the server %s ...", fullHost)
-	host, port := getHostPort(fullHost)
-	client, err := connectToHost(user, host, port)
-	if err != nil {
-		log.Fatalf("failed to connect to server %s: %s", host, err)
-	}
-	return client
-}
-
-func refreshSSHClients(host, user string, updateSSHHostKeys bool) *ssh.Client {
-	log.Println("--> Server is rebooting! Sleeping for 60s")
-	time.Sleep(RebootWaitTime * time.Second)
-	if updateSSHHostKeys {
-		sshKeyScan(host)
-	}
-	return getSSHClient(host, user)
 }
 
 func executeCmdFailOnError(client *ssh.Client, cmd string) {
@@ -426,11 +233,11 @@ func executeCmdFailOnError(client *ssh.Client, cmd string) {
 
 func enableRreplication(config YamlConfig, dryRun bool) {
 	primary, _ := getHostPort(config.Primary.Host)
-	firstReplSetupCmd := fmt.Sprintf("echo y | ghe-repl-setup %s", primary)
-	replSetupCmd := fmt.Sprintf("echo y | ghe-repl-setup --add %s", primary)
-	startReplCmd := "ghe-repl-start"
-	replStatusCmd := "ghe-repl-status"
-	applyConfigCmd := "ghe-config-apply"
+	replSetupCmd := newCmd("ghe-repl-setup")
+	startReplCmd := newCmd("ghe-repl-start")
+	replStatusCmd := newCmd("ghe-repl-status")
+	applyConfigCmd := newCmd("ghe-config-apply")
+	replDCNodeCmd := newCmd("ghe-repl-node")
 
 	for i, replica := range config.Replicas {
 		log.Println("--> Configuring the replica ")
@@ -439,28 +246,30 @@ func enableRreplication(config YamlConfig, dryRun bool) {
 			// If the replica has been already configured, the method execution fail saying "Already configured as cluster node"
 			// we ignore the error and proceed
 			if i == 0 {
-				executeCmd(replica.Client, firstReplSetupCmd)
-			} else {
-				executeCmd(replica.Client, replSetupCmd)
+				replSetupCmd.addArg("--add")
 			}
+			replSetupCmd.addArg(primary)
+			replSetupCmd.assumeYes()
+			executeCmd(replica.Client, replSetupCmd.String())
+
 		}
 		log.Println("--> Starting the replica ")
 		if !dryRun {
-			executeCmdFailOnError(replica.Client, startReplCmd)
+			executeCmdFailOnError(replica.Client, startReplCmd.String())
 		}
 		if !dryRun {
-			executeCmdFailOnError(replica.Client, replStatusCmd)
+			executeCmdFailOnError(replica.Client, replStatusCmd.String())
 		}
 		if replica.Datacenter != "" {
 			log.Println("-->  Configuring the replica for the specified datacenter: " + replica.Datacenter)
 			if !dryRun {
-				var datacenterCmd string
 				if replica.IsActive {
-					datacenterCmd = fmt.Sprintf("ghe-repl-node --active --datacenter %s", primary)
+					replDCNodeCmd.addArg("--active")
 				} else {
-					datacenterCmd = fmt.Sprintf("ghe-repl-node --inactive --datacenter %s", primary)
+					replDCNodeCmd.addArg("--inactive")
 				}
-				executeCmdFailOnError(replica.Client, datacenterCmd)
+				replDCNodeCmd.addArgs("--datacenter", primary)
+				executeCmdFailOnError(replica.Client, replDCNodeCmd.String())
 			}
 		}
 
@@ -468,17 +277,17 @@ func enableRreplication(config YamlConfig, dryRun bool) {
 
 	log.Println("--> Applying the configuration")
 	if !dryRun {
-		executeCmdFailOnError(config.Primary.Client, applyConfigCmd)
+		executeCmdFailOnError(config.Primary.Client, applyConfigCmd.String())
 	}
 }
 
 func stopReplication(config YamlConfig, dryRun bool) {
 	if config.Primary.ReplicaEnabled {
-		stopReplCmd := "ghe-repl-stop"
+		stopReplCmd := newCmd("ghe-repl-stop")
 		for _, replica := range config.Replicas {
 			log.Printf("--> Stopping the replica %s", replica.Host)
 			if !dryRun {
-				executeCmdFailOnError(replica.Client, stopReplCmd)
+				executeCmdFailOnError(replica.Client, stopReplCmd.String())
 			}
 		}
 	}
@@ -507,44 +316,4 @@ func isConfigInProgress(client *ssh.Client) (bool, error) {
 	// the script exit(3) and return false if no config are running, We ignore that and continue
 	isRunningStr := executeCmdAndReturnBuffer(client, CheckCfgScript, true)
 	return strconv.ParseBool(strings.TrimSuffix(isRunningStr, "\n"))
-}
-
-/**
- When the server reboot after an upgrade, the host ke changes and thus cannot open an SSH connection
- My approach was to run `ssh-keygen -R -p <port> <host> -f <known_hosts_file>` to remove current host entry
- and then run `ssh-keyscan -t ecdsa -p <port> <host>` ti get the new ssh keys
- and then, and only then append the new entry on the known_hosts file
-**/
-func sshKeyScan(host string) {
-	sshKH := filepath.Join(*sshConfigPath, "known_hosts")
-	h, p := getHostPort(host)
-	log.Println("--> Refreshing host keys for host " + h)
-	execCmdHost("ssh-keygen", "-R", fmt.Sprintf("[%s]:%s", h, p), "-f", sshKH)
-	hk := execCmdHost("ssh-keyscan", "-t", "ecdsa", "-p", p, h)
-	appendOnFile(sshKH, hk)
-}
-
-func execCmdHost(scmd string, arg ...string) string {
-	cmd := exec.Command(scmd, arg...)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = os.Stderr
-	err := cmd.Run()
-	if err != nil {
-		log.Fatalf("Connot execute Command On host: %v", err)
-	}
-	return out.String()
-}
-
-func appendOnFile(file, text string) {
-	f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-
-	defer f.Close()
-
-	if _, err = f.WriteString(text); err != nil {
-		log.Fatalf("%v", err)
-	}
 }
