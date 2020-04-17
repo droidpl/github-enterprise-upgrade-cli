@@ -1,6 +1,8 @@
 # Github Enterprise upgrade command line tool
 
-Command line tool, built with golang for automatic upgrade/patch of Github Entreprise. It support both single instance and multi replicas
+Command line tool, built with golang for automatic upgrade/patch of Github Entreprise. It support both single instance and multi replicas. 
+
+The source files are under `src` directory. An example of configuration file is available in `config.yml`. To build the application simply run `go build -o update-cli ./src`.
 
 Script options are:
 ```

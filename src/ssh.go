@@ -17,6 +17,16 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// Constants
+const (
+	DefaultUser    = "root"
+	DefaultPort    = "22"
+	RebootWaitTime = 60 // should be in seconds
+)
+
+// SSH files path. This variable is initiated from the
+var sshConfigPath *string
+
 func connectToHost(user, host, port string) (*ssh.Client, error) {
 	// A public key may be used to authenticate against the remote
 	// server by using an un-encrypted PEM-encoded private key file.
@@ -46,10 +56,9 @@ func connectToHost(user, host, port string) (*ssh.Client, error) {
 		},
 		HostKeyCallback: hostKeyCallback,
 	}
-
 	client, err := ssh.Dial("tcp", net.JoinHostPort(host, port), sshConfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not dial host: %v", err)
 	}
 	return client, nil
 }
@@ -165,4 +174,14 @@ func appendOnFile(file, text string) {
 	if _, err = f.WriteString(text); err != nil {
 		log.Fatalf("%v", err)
 	}
+}
+
+func getHostPort(mHost string) (host, port string) {
+	h, p, err := net.SplitHostPort(mHost)
+	// No port is specified, default is 22
+	if err != nil {
+		h = mHost
+		p = DefaultPort
+	}
+	return h, p
 }

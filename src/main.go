@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,16 +18,12 @@ import (
 
 // Constants
 const (
-	DefaultPort     = "22"
-	DefaultUser     = "root"
-	RebootWaitTime  = 60 // should be in seconds
-	retriesWaitTime = 15 // Time to wait before checking if the config finished
-	semverRegex     = "([0-9]+)(\\.[0-9]+)?(\\.[0-9]+)"
+	RetriesWaitTime = 15 // Time to wait before checking if the config finished
+	SemverRegex     = "([0-9]+)(\\.[0-9]+)?(\\.[0-9]+)"
 )
 
 var (
-	sshConfigPath *string
-	// GTHVersion to get current GHE version
+	// GHEVersion to get current GHE version
 	GHEVersion = newCmd("ghe-version")
 )
 
@@ -112,7 +107,7 @@ func main() {
 func getInstalledVersion(client *ssh.Client) string {
 	// Don't ignore connad errors
 	output := executeCmdAndReturnBuffer(client, GHEVersion.String(), false)
-	re := regexp.MustCompile(semverRegex)
+	re := regexp.MustCompile(SemverRegex)
 	return re.FindString(output)
 }
 
@@ -201,16 +196,6 @@ func getSupportedPlatforms() []string {
 	return []string{"hyperv", "kvm", "esx", "xen", "ami", "azure", "gce"}
 }
 
-func getHostPort(mHost string) (host, port string) {
-	h, p, err := net.SplitHostPort(mHost)
-	// No port is specified, default is 22
-	if err != nil {
-		h = mHost
-		p = DefaultPort
-	}
-	return h, p
-}
-
 func exist(a []string, x string) bool {
 	for _, n := range a {
 		if x == n {
@@ -236,11 +221,11 @@ func removeMaintenanceMode(client *ssh.Client, dryRun bool) {
 
 func waitCfgToFinish(client *ssh.Client, dryRun bool) {
 	if !dryRun {
-		ticker := time.NewTicker(retriesWaitTime * time.Second)
+		ticker := time.NewTicker(RetriesWaitTime * time.Second)
 		for range ticker.C {
 			isRunning, _ := isConfigInProgress(client)
 			if isRunning {
-				log.Printf("Configuration is still running... Retrying in %ds", retriesWaitTime)
+				log.Printf("Configuration is still running... Retrying in %ds", RetriesWaitTime)
 			} else {
 				break
 			}
