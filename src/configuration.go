@@ -43,11 +43,10 @@ func mapConfig(configFile, sshConfigPath string, useConfigFile bool) YamlConfig 
 	}
 	// get config from ssh config file if wanted
 	if useConfigFile {
-		cfg.getSSHConfig(sshConfigPath)
+		cfg.replaceWithSSHConfig(sshConfigPath)
 	}
 
 	cfg.configureIdentityKeys(sshConfigPath)
-	log.Printf("******** %v %s %s *******", cfg, sshConfigPath, configFile)
 	// Verify user input and fill default options
 	cfg.verifyConfigOption()
 	return cfg

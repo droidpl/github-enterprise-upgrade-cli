@@ -165,7 +165,8 @@ func execCmdHost(scmd string, arg ...string) string {
 	return out.String()
 }
 
-func (config *YamlConfig) getSSHConfig(configPath string) {
+//
+func (config *YamlConfig) replaceWithSSHConfig(configPath string) {
 	f, err := os.Open(filepath.Join(configPath, SSHConfigFile))
 	if err != nil {
 		log.Fatalf("An error happened while reading ssh config file: %v", err)
@@ -175,7 +176,19 @@ func (config *YamlConfig) getSSHConfig(configPath string) {
 		log.Fatalf("Unable to parse ssh config file: %v", err)
 	}
 	alias := config.Primary.Host
-	config.Primary.Host, config.Primary.User, config.Primary.SSHKey = getHostWithKeyFromSSHConfig(alias, *cfg)
+	// Get ssh config values and replace in Yaml config Struct if not empty
+	host, user, key := getHostWithKeyFromSSHConfig(alias, *cfg)
+	if host != "" {
+		config.Primary.Host = host
+	}
+
+	if user != "" {
+		config.Primary.User = user
+	}
+
+	if key != "" {
+		config.Primary.SSHKey = key
+	}
 
 	for i := range config.Replicas {
 		alias := config.Replicas[i].Host
@@ -183,6 +196,7 @@ func (config *YamlConfig) getSSHConfig(configPath string) {
 	}
 }
 
+// Given an alias and a config, this function return addr, user and ssh keys
 func getHostWithKeyFromSSHConfig(alias string, c ssh_config.Config) (addr, user, authkey string) {
 	host, _ := c.Get(alias, "Hostname")
 	port, _ := c.Get(alias, "Port")
@@ -200,6 +214,8 @@ func (config *YamlConfig) configureIdentityKeys(sshCfgPath string) {
 		config.Primary.SSHKey = filepath.Join(sshCfgPath, SSHKeyFile)
 	}
 	for i := range config.Replicas {
-		config.Replicas[i].SSHKey = filepath.Join(sshCfgPath, SSHKeyFile)
+		if config.Replicas[i].SSHKey == "" {
+			config.Replicas[i].SSHKey = filepath.Join(sshCfgPath, SSHKeyFile)
+		}
 	}
 }
