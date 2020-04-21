@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -20,7 +21,7 @@ func appendOnFile(file, text string) {
 	}
 }
 
-func getHostPort(mHost string) (host, port string) {
+func splitHostPort(mHost string) (host, port string) {
 	h, p, err := net.SplitHostPort(mHost)
 	// No port is specified, default is 22
 	if err != nil {
@@ -41,4 +42,17 @@ func exist(a []string, x string) bool {
 		}
 	}
 	return false
+}
+
+func getAbsPathFromTilde(path string) string {
+	if !strings.HasPrefix(path, "~") {
+		return path
+	}
+	return os.Getenv("HOME") + path[1:]
+}
+
+func absPath(path string) string {
+	path = getAbsPathFromTilde(path)
+	path, _ = filepath.Abs(path)
+	return path
 }

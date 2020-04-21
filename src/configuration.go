@@ -15,6 +15,7 @@ type YamlConfig struct {
 		User           string `yaml:"user"`
 		ReplicaEnabled bool   `yaml:"replication_enabled"`
 		Client         *ssh.Client
+		SSHKey         string `yaml:"authkey"`
 	} `yaml:"primary"`
 	Replicas []struct {
 		Host       string `yaml:"host"`
@@ -22,12 +23,13 @@ type YamlConfig struct {
 		IsActive   bool   `yaml:"active"`
 		Datacenter string `yaml:"datacenter"`
 		Client     *ssh.Client
+		SSHKey     string `yaml:"authkey"`
 	} `yaml:"replicas"`
 }
 
-func mapConfig(configPath string) YamlConfig {
+func mapConfig(configFile, sshConfigPath string, useConfigFile bool) YamlConfig {
 	// Parse config file
-	f, err := os.Open(configPath)
+	f, err := os.Open(configFile)
 	if err != nil {
 		log.Printf("Unable to Open Config file %v \n", err)
 	}
@@ -39,12 +41,19 @@ func mapConfig(configPath string) YamlConfig {
 		log.Fatalf("Something happened while reading the config file: %v \n", err)
 
 	}
+	// get config from ssh config file if wanted
+	if useConfigFile {
+		cfg.getSSHConfig(sshConfigPath)
+	}
+
+	cfg.configureIdentityKeys(sshConfigPath)
+	log.Printf("******** %v %s %s *******", cfg, sshConfigPath, configFile)
 	// Verify user input and fill default options
 	cfg.verifyConfigOption()
 	return cfg
 }
 
-func (config YamlConfig) verifyConfigOption() {
+func (config *YamlConfig) verifyConfigOption() {
 	// Set up default options for Primary
 	if config.Primary.Host == "" {
 		log.Fatal("Primary host shouldn't be empty")
