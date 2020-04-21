@@ -29,13 +29,18 @@ var (
 
 func main() {
 	// read the options
-	configPath := flag.String("config", "config.yml", "Configuration file")
+	configFile := flag.String("config", "config.yml", "Configuration file")
 	userversion := flag.String("v", "", "GHE version")
 	platform := flag.String("p", "esx", "Platform your Github Entreprise is running on")
 	sshConfigPath = flag.String("ssh-config", filepath.Join(os.Getenv("HOME"), ".ssh"), "SSH keys folder path")
 	dryRun := flag.Bool("dry-run", false, "If true, only print how teh execution looks like, without running it.")
 	refreshHostSSHKeys := flag.Bool("update-host-keys", false, "Grep new SSH host keys from the machine after rebooting the server, especially for upgrade")
+	useConfigFile := flag.Bool("use-ssh-config", false, "Complete missing details of config file from user-specific ssh configuration file")
 	flag.Parse()
+
+	// Make paths Absolute
+	*sshConfigPath = absPath(*sshConfigPath)
+	*configFile = absPath(*configFile)
 
 	// Cast the new version
 	targetVersion, err := version.NewVersion(*userversion)
@@ -48,9 +53,9 @@ func main() {
 		log.Fatalf("Unrecognized platforms %v, valid options are: %v", *platform, strings.Join(supportedPlatforms, ", "))
 	}
 	// Read config file and verify input
-	cfg := mapConfig(*configPath)
+	cfg := mapConfig(*configFile, *sshConfigPath, *useConfigFile)
 	// check connectivity and get clients
-	cfg = setupSSHClient(cfg)
+	cfg.setupSSHClient()
 	defer closeConnection(cfg)
 	// get GHE version installed on server & verify it's the same on Primary and replicas
 	currentVersion, _ := version.NewVersion(getInstalledVersion(cfg.Primary.Client))
@@ -70,7 +75,7 @@ func main() {
 		log.Println("--> Upgrading Primary server " + cfg.Primary.Host)
 		performUpgrade(cfg.Primary.Client, targetVersionSegment, *platform, *dryRun)
 		// server reboot, we need to open new connection to disable maintenance mode
-		cfg.Primary.Client = refreshSSHClients(cfg.Primary.Host, cfg.Primary.User, *refreshHostSSHKeys)
+		cfg.Primary.Client = refreshSSHClients(cfg.Primary.Host, cfg.Primary.User, cfg.Primary.SSHKey, *refreshHostSSHKeys)
 		waitCfgToFinish(cfg.Primary.Client, *dryRun)
 		// check if replica and perform individual upgrades on them
 		if cfg.Primary.ReplicaEnabled {
@@ -78,7 +83,7 @@ func main() {
 				log.Println("--> Upgrading Replica server " + replica.Host)
 				performUpgrade(replica.Client, targetVersionSegment, *platform, *dryRun)
 				// server reboot, we need to open new connection to disable maintenance mode
-				cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, *refreshHostSSHKeys)
+				cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, replica.SSHKey, *refreshHostSSHKeys)
 				waitCfgToFinish(cfg.Replicas[i].Client, *dryRun)
 			}
 			// Enabling again replication
@@ -232,7 +237,7 @@ func executeCmdFailOnError(client *ssh.Client, cmd string) {
 }
 
 func enableRreplication(config YamlConfig, dryRun bool) {
-	primary, _ := getHostPort(config.Primary.Host)
+	primary, _ := splitHostPort(config.Primary.Host)
 	replSetupCmd := newCmd("ghe-repl-setup")
 	startReplCmd := newCmd("ghe-repl-start")
 	replStatusCmd := newCmd("ghe-repl-status")

@@ -15,8 +15,11 @@ Script options are:
         GHE version
   -dry-run boolean
         If true, only print how teh execution looks like, without running it.
+  -use-ssh-config boolean
+        Read host config values from ssh config file. the host in config.yml would be the alias to get the host, port, user and ssh keys from
   -update-host-keys boolean
         Grep new SSH host keys from the machine after rebooting the server, especially for upgrade
+
 ```
 
 The configuration file, is a yaml file that describe how to connect to the instances:
@@ -24,13 +27,24 @@ The configuration file, is a yaml file that describe how to connect to the insta
 primary:
    host: host:port               // IP and ssh port to connect to (port is default to 22)
    user: user                    // ssh user to connect with (default to root)
+   authkey: "some auth keys"     // SSH auth keys for the primary (default to ~/.ssh/id_rsa)
    replication_enabled: false    // is replica enables (default to false)
 replicas:                        // list of replicas
    - host: host:port             // IP and ssh port to connect to (port is default to 22)
      user: user                  // user to connect with default to root
+     authkey: "some auth keys"   // SSH auth keys for the replica (default to ~/.ssh/id_rsa)
      active: false               // is the replica active or not (default to false)
-     datacenter: "somedata"      // datacenter name for georeplication (optional)
+     datacenter: "somedata"      // datacenter namegit  for geo-replication (optional)
 ```
 
-### Build app
+The app can read config from ssh config files. To enable this use the `-use-ssh-config` option. the app expect a `config` under the configured ssh folder (the one you mentioned under `-ssh-config`). The config file should look something like below:
+```
+Host primary
+    HostName XX.XX.XX.XX
+    User admin
+    Port 122
+    IdentityFile ~/.ssh/some_id.key
+```
+
+### Build app locally
 The source files are under `src` directory. An example of configuration file is available in `config.yml`. To build the application simply run `go build -o update-cli ./src`.
