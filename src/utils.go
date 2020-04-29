@@ -52,6 +52,9 @@ func getAbsPathFromTilde(path string) string {
 }
 
 func absPath(path string) string {
+	if path == "" {
+		return ""
+	}
 	path = getAbsPathFromTilde(path)
 	path, _ = filepath.Abs(path)
 	return path

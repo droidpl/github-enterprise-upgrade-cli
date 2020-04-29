@@ -177,28 +177,40 @@ func (config *YamlConfig) replaceWithSSHConfig(configPath string) {
 	}
 	alias := config.Primary.Host
 	// Get ssh config values and replace in Yaml config Struct if not empty
-	host, user, key := getHostWithKeyFromSSHConfig(alias, *cfg)
-	if host != "" {
-		config.Primary.Host = host
-	}
+	config.Primary.Host, config.Primary.User, config.Primary.SSHKey = getHostWithKeyFromSSHConfig(alias, *cfg)
 
-	if user != "" {
-		config.Primary.User = user
+	if config.Primary.ReplicaEnabled {
+		for i := range config.Replicas {
+			alias := config.Replicas[i].Host
+			config.Replicas[i].Host, config.Replicas[i].User, config.Replicas[i].SSHKey = getHostWithKeyFromSSHConfig(alias, *cfg)
+		}
 	}
+}
 
-	if key != "" {
-		config.Primary.SSHKey = key
+// Execute command on the remote host using the provide client!
+// You can choose to ignore the errors of a command execution,
+// if ignored, the method will return the result of the execution, if not the script will fail and exit
+func executeCmdAndReturnBuffer(client *ssh.Client, cmd string, ignore bool) string {
+	// Create session
+	session, err := client.NewSession()
+	if err != nil {
+		log.Fatalf("Failed to open SSH Session: %v", err)
 	}
+	var buffer bytes.Buffer
+	session.Stdout = &buffer
 
-	for i := range config.Replicas {
-		alias := config.Replicas[i].Host
-		config.Replicas[i].Host, config.Replicas[i].User, config.Replicas[i].SSHKey = getHostWithKeyFromSSHConfig(alias, *cfg)
+	if err := session.Run(cmd); err != nil && !ignore {
+		log.Fatalf("Failed to run %v", err)
 	}
+	return buffer.String()
 }
 
 // Given an alias and a config, this function return addr, user and ssh keys
 func getHostWithKeyFromSSHConfig(alias string, c ssh_config.Config) (addr, user, authkey string) {
-	host, _ := c.Get(alias, "Hostname")
+	host, err := c.Get(alias, "Hostname")
+	if err != nil || host == "" {
+		log.Print("Cannot find Hostname in ssh config file. Check your SSH configuration options.")
+	}
 	port, _ := c.Get(alias, "Port")
 	user, _ = c.Get(alias, "User")
 	authkey, _ = c.Get(alias, "IdentityFile")

@@ -13,6 +13,8 @@ Script options are:
         SSH keys folder path (default "~/.ssh")
   -v string
         GHE version
+  -y boolean
+        Automatic yes to confirmation prompt and run non-interactively
   -dry-run boolean
         If true, only print how teh execution looks like, without running it.
   -use-ssh-config boolean

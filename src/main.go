@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"log"
@@ -34,6 +33,7 @@ func main() {
 	platform := flag.String("p", "esx", "Platform your Github Entreprise is running on")
 	sshConfigPath = flag.String("ssh-config", filepath.Join(os.Getenv("HOME"), ".ssh"), "SSH keys folder path")
 	dryRun := flag.Bool("dry-run", false, "If true, only print how teh execution looks like, without running it.")
+	assumeYes := flag.Bool("y", false, "Automatic yes to confirmation prompt and run non-interactively")
 	refreshHostSSHKeys := flag.Bool("update-host-keys", false, "Grep new SSH host keys from the machine after rebooting the server, especially for upgrade")
 	useConfigFile := flag.Bool("use-ssh-config", false, "Complete missing details of config file from user-specific ssh configuration file")
 	flag.Parse()
@@ -45,7 +45,7 @@ func main() {
 	// Cast the new version
 	targetVersion, err := version.NewVersion(*userversion)
 	if err != nil {
-		log.Fatalf("An error happened while casting GHE specified version %v, check https://enterprise.github.com/releases. error details: %v", *userversion, err)
+		log.Fatalf("An error happened while reading GHE specified version %v, check https://enterprise.github.com/releases. error details: %v", *userversion, err)
 	}
 	// Check the selected platform
 	if !exist(getSupportedPlatforms(), *platform) {
@@ -67,11 +67,12 @@ func main() {
 	}
 	currentVersionSegment := currentVersion.Segments()
 	targetVersionSegment := targetVersion.Segments()
-
+	// ask user for final confirmation
+	cfg.waitForConfirmation(currentVersion.String(), targetVersion.String(), *assumeYes)
 	if (targetVersionSegment[0] > currentVersionSegment[0]) || (targetVersionSegment[1] > currentVersionSegment[1]) {
 		applyMaintenanceMode(cfg.Primary.Client, *dryRun)
 		stopReplication(cfg, *dryRun)
-		log.Println("--> Upgrading Primary server " + cfg.Primary.Host)
+		log.Println("--> Updating Primary server " + cfg.Primary.Host)
 		performUpgrade(cfg.Primary.Client, targetVersionSegment, *platform, *dryRun)
 		// server reboot, we need to open new connection to disable maintenance mode
 		cfg.Primary.Client = refreshSSHClients(cfg.Primary.Host, cfg.Primary.User, cfg.Primary.SSHKey, *refreshHostSSHKeys)
@@ -79,7 +80,7 @@ func main() {
 		// check if replica and perform individual upgrades on them
 		if cfg.Primary.ReplicaEnabled {
 			for i, replica := range cfg.Replicas {
-				log.Println("--> Upgrading Replica server " + replica.Host)
+				log.Println("--> Updating Replica server " + replica.Host)
 				performUpgrade(replica.Client, targetVersionSegment, *platform, *dryRun)
 				// server reboot, we need to open new connection to disable maintenance mode
 				cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, replica.SSHKey, *refreshHostSSHKeys)
@@ -90,19 +91,23 @@ func main() {
 		}
 		removeMaintenanceMode(cfg.Primary.Client, *dryRun)
 	} else {
-		log.Println("--> Upgrading Primary server " + cfg.Primary.Host)
+		log.Println("--> Updating Primary server " + cfg.Primary.Host)
 		performHotPath(cfg.Primary.Client, targetVersionSegment, *dryRun)
 		// check if replica and perform individual patchs on them
 		if cfg.Primary.ReplicaEnabled {
 			for _, replica := range cfg.Replicas {
 				if replica.IsActive {
-					log.Println("--> Upgrading Replica server " + replica.Host)
+					log.Println("--> Updating Replica server " + replica.Host)
 					performHotPath(replica.Client, targetVersionSegment, *dryRun)
 				}
 			}
 		}
 	}
-	log.Println("--> The current installed version of Github Entreprise is " + getInstalledVersion(cfg.Primary.Client))
+	if *dryRun {
+		log.Println("--> You're running the script in dry-run mode. Nothing changed in the server(s)")
+	} else {
+		log.Println("--> The current installed version of Github Entreprise is " + getInstalledVersion(cfg.Primary.Client))
+	}
 }
 
 // Since we need to read version from output, we separate it from the general method
@@ -183,7 +188,7 @@ func getPackageName(versionArray []int, platform string) string {
 }
 
 func checkPrimaryReplicasVersion(config YamlConfig, currentVersion *version.Version) {
-	log.Println("--> Comparing Replicas GHE version to primary. Current version is " + currentVersion.String())
+	log.Println("--> Comparing Replica(s) GHE version to primary. Current version is " + currentVersion.String())
 	for _, replica := range config.Replicas {
 		if replica.IsActive {
 			rHost := replica.Host
@@ -212,7 +217,7 @@ func removeMaintenanceMode(client *ssh.Client, dryRun bool) {
 	removeMaintenanceCmd := newCmdArgs("ghe-maintenance", "-u")
 	log.Println("--> Disabling maintenance mode")
 	executeCmd(client, removeMaintenanceCmd.String())
-	log.Println("-->  Maintenance mode disabled!")
+	log.Println("--> Maintenance mode disabled!")
 }
 
 func waitCfgToFinish(client *ssh.Client, dryRun bool) {
@@ -245,7 +250,7 @@ func enableRreplication(config YamlConfig, dryRun bool) {
 	replDCNodeCmd := newCmd("ghe-repl-node")
 
 	for i, replica := range config.Replicas {
-		log.Println("--> Configuring the replica ")
+		log.Println("--> Configuring replication ")
 		if !dryRun {
 			// Check if its the first replica or not, to decide which command to run
 			// If the replica has been already configured, the method execution fail saying "Already configured as cluster node"
@@ -258,7 +263,7 @@ func enableRreplication(config YamlConfig, dryRun bool) {
 			executeCmd(replica.Client, replSetupCmd.String())
 
 		}
-		log.Println("--> Starting the replica ")
+		log.Println("--> Starting replication ")
 		if !dryRun {
 			executeCmdFailOnError(replica.Client, startReplCmd.String())
 		}
@@ -266,7 +271,7 @@ func enableRreplication(config YamlConfig, dryRun bool) {
 			executeCmdFailOnError(replica.Client, replStatusCmd.String())
 		}
 		if replica.Datacenter != "" {
-			log.Println("-->  Configuring the replica for the specified datacenter: " + replica.Datacenter)
+			log.Println("-->  Configuring replication for datacenter: " + replica.Datacenter)
 			if !dryRun {
 				if replica.IsActive {
 					replDCNodeCmd.addArg("--active")
@@ -280,7 +285,7 @@ func enableRreplication(config YamlConfig, dryRun bool) {
 
 	}
 
-	log.Println("--> Applying the configuration")
+	log.Println("--> Applying replication configuration")
 	if !dryRun {
 		executeCmdFailOnError(config.Primary.Client, applyConfigCmd.String())
 	}
@@ -290,30 +295,12 @@ func stopReplication(config YamlConfig, dryRun bool) {
 	if config.Primary.ReplicaEnabled {
 		stopReplCmd := newCmd("ghe-repl-stop")
 		for _, replica := range config.Replicas {
-			log.Printf("--> Stopping the replica %s", replica.Host)
+			log.Printf("--> Stopping replication %s", replica.Host)
 			if !dryRun {
 				executeCmdFailOnError(replica.Client, stopReplCmd.String())
 			}
 		}
 	}
-}
-
-// Execute command on the remote host using the provide client!
-// You can choose to ignore the errors of a command execution,
-// if ignored, the method will return the result of the execution, if not the script will fail and exit
-func executeCmdAndReturnBuffer(client *ssh.Client, cmd string, ignore bool) string {
-	// Create session
-	session, err := client.NewSession()
-	if err != nil {
-		log.Fatalf("Failed to open SSH Session: %v", err)
-	}
-	var buffer bytes.Buffer
-	session.Stdout = &buffer
-
-	if err := session.Run(cmd); err != nil && !ignore {
-		log.Fatalf("Failed to run %v", err)
-	}
-	return buffer.String()
 }
 
 func isConfigInProgress(client *ssh.Client) (bool, error) {
