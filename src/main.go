@@ -45,12 +45,11 @@ func main() {
 	// Cast the new version
 	targetVersion, err := version.NewVersion(*userversion)
 	if err != nil {
-		log.Fatalf("An error happened while casting GHE specified version %v : %v", *userversion, err)
+		log.Fatalf("An error happened while casting GHE specified version %v, check https://enterprise.github.com/releases. error details: %v", *userversion, err)
 	}
 	// Check the selected platform
-	supportedPlatforms := getSupportedPlatforms()
-	if !exist(supportedPlatforms, *platform) {
-		log.Fatalf("Unrecognized platforms %v, valid options are: %v", *platform, strings.Join(supportedPlatforms, ", "))
+	if !exist(getSupportedPlatforms(), *platform) {
+		log.Fatalf("Unrecognized platforms %s, valid options are: %s", *platform, strings.Join(getSupportedPlatforms(), ", "))
 	}
 	// Read config file and verify input
 	cfg := mapConfig(*configFile, *sshConfigPath, *useConfigFile)
@@ -167,6 +166,7 @@ func performUpgrade(client *ssh.Client, version []int, platform string, dryRun b
 	}
 }
 
+// Return package name and handle the differences for both hotpatch and upgrade naming
 func getPackageName(versionArray []int, platform string) string {
 	version := strings.Trim(strings.Replace(fmt.Sprint(versionArray), " ", ".", -1), "[]")
 	var pkgName = "github-enterprise-"

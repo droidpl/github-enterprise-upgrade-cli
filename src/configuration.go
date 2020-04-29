@@ -31,7 +31,7 @@ func mapConfig(configFile, sshConfigPath string, useConfigFile bool) YamlConfig 
 	// Parse config file
 	f, err := os.Open(configFile)
 	if err != nil {
-		log.Printf("Unable to Open Config file %v \n", err)
+		log.Printf("Unable to Open Config file %v", err)
 	}
 	defer f.Close()
 	var cfg YamlConfig
