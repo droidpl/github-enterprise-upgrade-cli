@@ -146,9 +146,7 @@ func closeConnection(config YamlConfig) {
 	config.Primary.Client.Close()
 	if config.Primary.ReplicaEnabled {
 		for _, replica := range config.Replicas {
-			if replica.IsActive {
-				replica.Client.Close()
-			}
+			replica.Client.Close()
 		}
 	}
 }
