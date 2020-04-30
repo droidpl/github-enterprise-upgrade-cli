@@ -126,7 +126,7 @@ func (config *YamlConfig) setupSSHClient() {
 	}
 }
 func refreshSSHClients(host, user, sshkeyPath string, updateSSHHostKeys bool) *ssh.Client {
-	// Repeat for 3 times until we succeed
+	// Repeat for 3 times until we succeed, or give up on server and fail
 	for i := 0; i < 3; i++ {
 		log.Println("--> Server is rebooting! Sleeping for 60s")
 		time.Sleep(RebootWaitTime * time.Second)

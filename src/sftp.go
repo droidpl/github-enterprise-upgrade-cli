@@ -22,7 +22,6 @@ func copyFile(client *ssh.Client, pkgName string) {
 		log.Fatal("Cannot create SFTP client")
 	}
 	defer sftp.Close()
-
 	// create destination file
 	dstFile, err := sftp.Create(fullPath)
 	if err != nil {
@@ -51,4 +50,24 @@ func copyFile(client *ssh.Client, pkgName string) {
 		log.Fatalf("Cannot copy file %s to remote server: %v", fullPath, err)
 	}
 
+}
+
+func isExist(client *ssh.Client, filename string) bool {
+	// create new SFTP client
+	fullPath := savePath + filename
+	sftp, err := sftp.NewClient(client)
+	if err != nil {
+		log.Fatal("Cannot create SFTP client")
+	}
+	defer sftp.Close()
+	// create source file
+	srcFile, err := os.Open(fullPath)
+	if err != nil {
+		return false
+	}
+	if _, err := srcFile.Stat(); err == nil {
+		return true
+	}
+
+	return false
 }
