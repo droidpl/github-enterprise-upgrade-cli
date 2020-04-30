@@ -33,6 +33,7 @@ func main() {
 	platform := flag.String("p", "esx", "Platform your Github Entreprise is running on")
 	sshConfigPath = flag.String("ssh-config", filepath.Join(os.Getenv("HOME"), ".ssh"), "SSH keys folder path")
 	dryRun := flag.Bool("dry-run", false, "If true, only print how teh execution looks like, without running it.")
+	local := flag.Bool("l", false, "Download the package locally, and then upload it to servers using sftp")
 	assumeYes := flag.Bool("y", false, "Automatic yes to confirmation prompt and run non-interactively")
 	refreshHostSSHKeys := flag.Bool("update-host-keys", false, "Grep new SSH host keys from the machine after rebooting the server, especially for upgrade")
 	useConfigFile := flag.Bool("use-ssh-config", false, "Complete missing details of config file from user-specific ssh configuration file")
@@ -68,12 +69,16 @@ func main() {
 	currentVersionSegment := currentVersion.Segments()
 	targetVersionSegment := targetVersion.Segments()
 	// ask user for final confirmation
-	cfg.waitForConfirmation(currentVersion.String(), targetVersion.String(), *assumeYes)
+	cfg.askForConfirmation(currentVersion.String(), targetVersion.String(), *assumeYes, *dryRun)
 	if (targetVersionSegment[0] > currentVersionSegment[0]) || (targetVersionSegment[1] > currentVersionSegment[1]) {
+		// If user chosen to local option, we upload the files to server first
+		if *local {
+			cfg.uploadFromHost(getPackageName(targetVersionSegment, *platform), downloadUpgradeURL(targetVersionSegment, *platform))
+		}
 		applyMaintenanceMode(cfg.Primary.Client, *dryRun)
 		stopReplication(cfg, *dryRun)
 		log.Println("--> Updating Primary server " + cfg.Primary.Host)
-		performUpgrade(cfg.Primary.Client, targetVersionSegment, *platform, *dryRun)
+		performUpgrade(cfg.Primary.Client, targetVersionSegment, *platform, *local, *dryRun)
 		// server reboot, we need to open new connection to disable maintenance mode
 		cfg.Primary.Client = refreshSSHClients(cfg.Primary.Host, cfg.Primary.User, cfg.Primary.SSHKey, *refreshHostSSHKeys)
 		waitCfgToFinish(cfg.Primary.Client, *dryRun)
@@ -81,7 +86,7 @@ func main() {
 		if cfg.Primary.ReplicaEnabled {
 			for i, replica := range cfg.Replicas {
 				log.Println("--> Updating Replica server " + replica.Host)
-				performUpgrade(replica.Client, targetVersionSegment, *platform, *dryRun)
+				performUpgrade(replica.Client, targetVersionSegment, *platform, *local, *dryRun)
 				// server reboot, we need to open new connection to disable maintenance mode
 				cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, replica.SSHKey, *refreshHostSSHKeys)
 				waitCfgToFinish(cfg.Replicas[i].Client, *dryRun)
@@ -91,14 +96,18 @@ func main() {
 		}
 		removeMaintenanceMode(cfg.Primary.Client, *dryRun)
 	} else {
+		// If user chosen to local option, we upload the files to server first
+		if *local {
+			cfg.uploadFromHost(getPackageName(targetVersionSegment, *platform), downloadPatchURL(targetVersionSegment))
+		}
 		log.Println("--> Updating Primary server " + cfg.Primary.Host)
-		performHotPath(cfg.Primary.Client, targetVersionSegment, *dryRun)
+		performHotPath(cfg.Primary.Client, targetVersionSegment, *local, *dryRun)
 		// check if replica and perform individual patchs on them
 		if cfg.Primary.ReplicaEnabled {
 			for _, replica := range cfg.Replicas {
 				if replica.IsActive {
 					log.Println("--> Updating Replica server " + replica.Host)
-					performHotPath(replica.Client, targetVersionSegment, *dryRun)
+					performHotPath(replica.Client, targetVersionSegment, *local, *dryRun)
 				}
 			}
 		}
@@ -136,36 +145,41 @@ func downloadUpgradeURL(version []int, platform string) string {
 	return githubUpgradeURL
 }
 
-func performHotPath(client *ssh.Client, version []int, dryRun bool) {
+func performHotPath(client *ssh.Client, version []int, local, dryRun bool) {
 	pkgName := getPackageName(version, "")
 	packageURL := downloadPatchURL(version)
 	upgradeCmd := newCmdArgs("ghe-upgrade", "-y", pkgName)
 	downloadPkgCmd := newCmdArgs("curl", "-L", "-O", packageURL)
-	cdCmd := newCmdArgs("cd", "/tmp")
-
-	log.Println("--> Downloading package " + pkgName)
-	if !dryRun {
-		executeCmdFailOnError(client, concatCmds(cdCmd.String(), downloadPkgCmd.String()))
+	cdCmd := newCmdArgs("cd", savePath)
+	// do not download the file locally, it has been already uploaded to the server
+	if !local {
+		log.Println("--> Downloading package " + pkgName)
+		if !dryRun {
+			executeCmdFailOnError(client, concatCmds(cdCmd.String(), downloadPkgCmd.String()))
+		}
 	}
-	log.Println("--> Installing the package " + pkgName)
+
+	log.Println("--> Installing package " + pkgName)
 	if !dryRun {
 		executeCmdFailOnError(client, concatCmds(cdCmd.String(), upgradeCmd.String()))
 	}
 }
 
-func performUpgrade(client *ssh.Client, version []int, platform string, dryRun bool) {
+func performUpgrade(client *ssh.Client, version []int, platform string, local, dryRun bool) {
 	pkgName := getPackageName(version, platform)
 	packageURL := downloadUpgradeURL(version, platform)
 	upgradeCmd := newCmdArgs("ghe-upgrade", "-y", pkgName)
 	downloadPkgCmd := newCmdArgs("curl", "-L", "-O", packageURL)
-	cdCmd := newCmdArgs("cd", "/tmp")
-
-	log.Println("--> Downloading package " + pkgName)
-	if !dryRun {
-		executeCmdFailOnError(client, concatCmds(cdCmd.String(), downloadPkgCmd.String()))
+	cdCmd := newCmdArgs("cd", savePath)
+	// do not download the file locally, it has been already uploaded to the server
+	if !local {
+		log.Println("--> Downloading package " + pkgName)
+		if !dryRun {
+			executeCmdFailOnError(client, concatCmds(cdCmd.String(), downloadPkgCmd.String()))
+		}
 	}
 
-	log.Println("--> Installing the package" + pkgName)
+	log.Println("--> Installing package " + pkgName)
 	if !dryRun {
 		executeCmd(client, concatCmds(cdCmd.String(), upgradeCmd.String()))
 	}
@@ -308,4 +322,18 @@ func isConfigInProgress(client *ssh.Client) (bool, error) {
 	// the script exit(3) and return false if no config are running, We ignore that and continue
 	isRunningStr := executeCmdAndReturnBuffer(client, CheckCfgScript, true)
 	return strconv.ParseBool(strings.TrimSuffix(isRunningStr, "\n"))
+}
+
+func (config YamlConfig) uploadFromHost(pkgName, pkgURL string) {
+	log.Printf("local option selected...Downloading the package %s locally", pkgName)
+	downloadPkgToHost(pkgURL, pkgName)
+	log.Printf("Uploading package to primary %s", config.Primary.Host)
+	copyFile(config.Primary.Client, pkgName)
+	if config.Primary.ReplicaEnabled {
+		for _, replica := range config.Replicas {
+			log.Printf("Uploading package to replica %s", config.Primary.Host)
+			copyFile(replica.Client, pkgName)
+		}
+	}
+
 }

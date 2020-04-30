@@ -77,7 +77,7 @@ func (config *YamlConfig) verifyConfigOption() {
 	}
 }
 
-func (config *YamlConfig) waitForConfirmation(currentVer, targetVer string, assumeYes bool) {
+func (config *YamlConfig) askForConfirmation(currentVer, targetVer string, assumeYes, dryRun bool) {
 	log.Println("Welcome to SGT GHE upgrade tool")
 	fmt.Println("=====================================")
 	fmt.Println("Please find below Upgrade details:")
@@ -107,7 +107,11 @@ func (config *YamlConfig) waitForConfirmation(currentVer, targetVer string, assu
 	table.SetNoWhiteSpace(true)
 	table.AppendBulk(data) // Add Bulk Data
 	table.Render()
-	fmt.Println("This will update the primary and all replica nodes (if any)")
+	if dryRun {
+		fmt.Println("Script is running in dry-run mode. Nothing will change in server(s)")
+	} else {
+		fmt.Println("This will update the primary and all replica nodes (if any)")
+	}
 	fmt.Println("=====================================")
 	if !assumeYes {
 		var str string

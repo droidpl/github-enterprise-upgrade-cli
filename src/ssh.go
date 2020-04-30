@@ -111,10 +111,9 @@ func (config *YamlConfig) setupSSHClient() {
 	log.Println("Success")
 	if config.Primary.ReplicaEnabled {
 		for i, replica := range config.Replicas {
-			if replica.IsActive {
-				config.Replicas[i].Client = getSSHClient(replica.Host, replica.User, replica.SSHKey)
-				log.Println("Success")
-			}
+			config.Replicas[i].Client = getSSHClient(replica.Host, replica.User, replica.SSHKey)
+			log.Println("Success")
+
 		}
 	}
 }

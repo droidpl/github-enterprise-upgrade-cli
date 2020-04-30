@@ -1,11 +1,15 @@
 package main
 
 import (
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/schollz/progressbar/v3"
 )
 
 func appendOnFile(file, text string) {
@@ -58,4 +62,32 @@ func absPath(path string) string {
 	path = getAbsPathFromTilde(path)
 	path, _ = filepath.Abs(path)
 	return path
+}
+
+func downloadPkgToHost(url, pkgName string) {
+	fullPath := savePath + pkgName
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		log.Fatalf("An error happened while trying to prepare download request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Fatalf("An error happened while trying to get HTTP client: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var out io.Writer
+	f, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		log.Fatalf("Cannot open file %s: %v", fullPath, err)
+	}
+	defer f.Close()
+	log.Printf("Downloading package %s", pkgName)
+	bar := progressbar.NewOptions(
+		int(resp.ContentLength),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionClearOnFinish(),
+	)
+	out = io.MultiWriter(f, bar)
+	io.Copy(out, resp.Body)
 }
