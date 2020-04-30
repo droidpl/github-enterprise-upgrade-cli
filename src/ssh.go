@@ -97,13 +97,21 @@ func executeCmd(client *ssh.Client, cmd string) error {
 	return nil
 }
 func getSSHClient(fullHost, user, sshkeyPath string) *ssh.Client {
+	client, err := getSSHClientWithError(fullHost, user, sshkeyPath)
+	if err != nil {
+		log.Fatalf("failed to connect to server %s: %s", fullHost, err)
+	}
+	return client
+}
+
+func getSSHClientWithError(fullHost, user, sshkeyPath string) (*ssh.Client, error) {
 	log.Printf("--> Checking Connectivity of the server %s ...", fullHost)
 	host, port := splitHostPort(fullHost)
 	client, err := connectToHost(user, host, port, sshkeyPath)
 	if err != nil {
-		log.Fatalf("failed to connect to server %s: %s", host, err)
+		return nil, err
 	}
-	return client
+	return client, nil
 }
 
 func (config *YamlConfig) setupSSHClient() {
@@ -118,12 +126,20 @@ func (config *YamlConfig) setupSSHClient() {
 	}
 }
 func refreshSSHClients(host, user, sshkeyPath string, updateSSHHostKeys bool) *ssh.Client {
-	log.Println("--> Server is rebooting! Sleeping for 60s")
-	time.Sleep(RebootWaitTime * time.Second)
-	if updateSSHHostKeys {
-		sshKeyScan(host)
+	// Repeat for 3 times until we succeed
+	for i := 0; i < 3; i++ {
+		log.Println("--> Server is rebooting! Sleeping for 60s")
+		time.Sleep(RebootWaitTime * time.Second)
+		if updateSSHHostKeys {
+			sshKeyScan(host)
+		}
+		client, err := getSSHClientWithError(host, user, sshkeyPath)
+		if err == nil {
+			return client
+		}
 	}
-	return getSSHClient(host, user, sshkeyPath)
+	log.Fatalf("Cannot re-connect to the server after 3 tries. Please check server connectivity")
+	return nil
 }
 
 func closeConnection(config YamlConfig) {

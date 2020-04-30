@@ -118,10 +118,10 @@ func (config *YamlConfig) askForConfirmation(currentVer, targetVer string, assum
 		for {
 			fmt.Print("Are you sure you want to proceed (y/n)?")
 			fmt.Scanf("%s", &str)
-			if str == "y" {
+			if strings.ToLower(str) == "y" {
 				break
 			}
-			if str == "n" {
+			if strings.ToLower(str) == "n" {
 				log.Println("Upgrade Aborted")
 				os.Exit(0)
 			}
