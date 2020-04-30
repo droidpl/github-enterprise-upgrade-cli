@@ -46,7 +46,7 @@ func main() {
 	// Cast the new version
 	targetVersion, err := version.NewVersion(*userversion)
 	if err != nil {
-		log.Fatalf("An error happened while reading GHE specified version %v, check https://enterprise.github.com/releases. error details: %v", *userversion, err)
+		log.Fatalf("Incorrect version %v, Please provide a valid version. check https://enterprise.github.com/releases. error details: %v", *userversion, err)
 	}
 	// Check the selected platform
 	if !exist(getSupportedPlatforms(), *platform) {
