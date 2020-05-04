@@ -153,8 +153,8 @@ func performHotPath(client *ssh.Client, version []int, local, dryRun bool) {
 	cdCmd := newCmdArgs("cd", savePath)
 	// do not download the file locally, it has been already uploaded to the server
 	if !local {
-		if pkgExist := isExist(client, savePath+pkgName); pkgExist {
-			log.Println("--> Package %s already exist, skipping download" + pkgName)
+		if pkgExist := fileExist(client, pkgName); pkgExist {
+			log.Printf("--> Package %s already exist, skipping download", pkgName)
 		} else {
 			log.Println("--> Downloading package " + pkgName)
 			if !dryRun {
@@ -177,7 +177,7 @@ func performUpgrade(client *ssh.Client, version []int, platform string, local, d
 	cdCmd := newCmdArgs("cd", savePath)
 	// do not download the file locally, it has been already uploaded to the server
 	if !local {
-		if pkgExist := isExist(client, savePath+pkgName); pkgExist {
+		if pkgExist := fileExist(client, pkgName); pkgExist {
 			log.Println("--> Package %s already exist, skipping download" + pkgName)
 		} else {
 			log.Println("--> Downloading package " + pkgName)
@@ -336,8 +336,8 @@ func isConfigInProgress(client *ssh.Client) (bool, error) {
 func (config YamlConfig) uploadFromHost(pkgName, pkgURL string) {
 	log.Printf("local option selected...Downloading the package %s locally", pkgName)
 	downloadPkgToHost(pkgURL, pkgName)
-	if pkgExist := isExist(config.Primary.Client, savePath+pkgName); pkgExist {
-		log.Printf("--> Package %s already exist, skipping upload" + pkgName)
+	if pkgExist := fileExist(config.Primary.Client, pkgName); pkgExist {
+		log.Printf("--> Package %s already exist, skipping upload", pkgName)
 	} else {
 		log.Printf("Uploading package to primary %s", config.Primary.Host)
 		copyFile(config.Primary.Client, pkgName)
@@ -345,8 +345,8 @@ func (config YamlConfig) uploadFromHost(pkgName, pkgURL string) {
 
 	if config.Primary.ReplicaEnabled {
 		for _, replica := range config.Replicas {
-			if pkgExist := isExist(replica.Client, savePath+pkgName); pkgExist {
-				log.Printf("--> Package %s already exist, skipping upload" + pkgName)
+			if pkgExist := fileExist(replica.Client, pkgName); pkgExist {
+				log.Printf("--> Package %s already exist, skipping upload", pkgName)
 			} else {
 				log.Printf("Uploading package to replica %s", replica.Host)
 				copyFile(replica.Client, pkgName)

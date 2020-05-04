@@ -52,7 +52,7 @@ func copyFile(client *ssh.Client, pkgName string) {
 
 }
 
-func isExist(client *ssh.Client, filename string) bool {
+func fileExist(client *ssh.Client, filename string) bool {
 	// create new SFTP client
 	fullPath := savePath + filename
 	sftp, err := sftp.NewClient(client)
@@ -61,13 +61,12 @@ func isExist(client *ssh.Client, filename string) bool {
 	}
 	defer sftp.Close()
 	// create source file
-	srcFile, err := os.Open(fullPath)
+	srcFile, err := sftp.Open(fullPath)
 	if err != nil {
 		return false
 	}
 	if _, err := srcFile.Stat(); err == nil {
 		return true
 	}
-
 	return false
 }
