@@ -14,7 +14,9 @@ Script options are:
   -v string
         GHE version
   -y boolean
-        Automatic yes to confirmation prompt and run non-interactively
+        Automatic yes to confirmation prompt and run non-interactively (default false)
+  -l boolean
+        Download the upgrade package locally (from where you're running the tool) and upload it to servers, instead of downloading it from the servers. This is useful in case of servers have no/slow internet (default false)
   -dry-run boolean
         If true, only print how teh execution looks like, without running it.
   -use-ssh-config boolean
