@@ -77,7 +77,7 @@ func (config *YamlConfig) verifyConfigOption() {
 	}
 }
 
-func (config *YamlConfig) askForConfirmation(currentVer, targetVer string, assumeYes, dryRun bool) {
+func (config *YamlConfig) bringFacts(currentVer, targetVer string, assumeYes, dryRun bool) {
 	log.Println("Welcome to SGT GHE upgrade tool")
 	fmt.Println("=====================================")
 	fmt.Println("Please find below Upgrade details:")
@@ -113,19 +113,23 @@ func (config *YamlConfig) askForConfirmation(currentVer, targetVer string, assum
 		fmt.Println("This will update the primary and all replica nodes (if any)")
 	}
 	fmt.Println("=====================================")
-	if !assumeYes {
-		var str string
-		for {
-			fmt.Print("Are you sure you want to proceed (y/n)?")
-			fmt.Scanf("%s", &str)
-			if strings.ToLower(str) == "y" {
-				break
-			}
-			if strings.ToLower(str) == "n" {
-				log.Println("Upgrade Aborted")
-				os.Exit(0)
-			}
-		}
+	if !assumeYes && userConfirm() {
+		os.Exit(1)
 	}
 
+}
+
+func userConfirm() bool {
+	var str string
+	for {
+		fmt.Print("Do you want to proceed (y/n)?")
+		fmt.Scanf("%s", &str)
+		if strings.ToLower(str) == "y" {
+			return true
+		}
+		if strings.ToLower(str) == "n" {
+			log.Println("Upgrade Aborted")
+			return false
+		}
+	}
 }

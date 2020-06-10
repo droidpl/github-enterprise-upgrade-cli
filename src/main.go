@@ -69,7 +69,7 @@ func main() {
 	currentVersionSegment := currentVersion.Segments()
 	targetVersionSegment := targetVersion.Segments()
 	// ask user for final confirmation
-	cfg.askForConfirmation(currentVersion.String(), targetVersion.String(), *assumeYes, *dryRun)
+	cfg.bringFacts(currentVersion.String(), targetVersion.String(), *assumeYes, *dryRun)
 	if (targetVersionSegment[0] > currentVersionSegment[0]) || (targetVersionSegment[1] > currentVersionSegment[1]) {
 		// If user chosen to local option, we upload the files to server first
 		if *local {
@@ -85,11 +85,13 @@ func main() {
 		// check if replica and perform individual upgrades on them
 		if cfg.Primary.ReplicaEnabled {
 			for i, replica := range cfg.Replicas {
-				log.Println("--> Updating Replica server " + replica.Host)
-				performUpgrade(replica.Client, targetVersionSegment, *platform, *local, *dryRun)
-				// server reboot, we need to open new connection to disable maintenance mode
-				cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, replica.SSHKey, *refreshHostSSHKeys)
-				waitCfgToFinish(cfg.Replicas[i].Client, *dryRun)
+				if checkReplStatus(replica.Client) {
+					log.Println("--> Updating Replica server " + replica.Host)
+					performUpgrade(replica.Client, targetVersionSegment, *platform, *local, *dryRun)
+					// server reboot, we need to open new connection to disable maintenance mode
+					cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, replica.SSHKey, *refreshHostSSHKeys)
+					waitCfgToFinish(cfg.Replicas[i].Client, *dryRun)
+				}
 			}
 			// Enabling again replication
 			enableRreplication(cfg, *dryRun)
@@ -101,13 +103,13 @@ func main() {
 			cfg.uploadFromHost(getPackageName(targetVersionSegment, *platform), downloadPatchURL(targetVersionSegment))
 		}
 		log.Println("--> Updating Primary server " + cfg.Primary.Host)
-		performHotPath(cfg.Primary.Client, targetVersionSegment, *local, *dryRun)
+		performHotPatch(cfg.Primary.Client, targetVersionSegment, *local, *dryRun)
 		// check if replica and perform individual patchs on them
 		if cfg.Primary.ReplicaEnabled {
 			for _, replica := range cfg.Replicas {
-				if replica.IsActive {
+				if checkReplStatus(replica.Client) {
 					log.Println("--> Updating Replica server " + replica.Host)
-					performHotPath(replica.Client, targetVersionSegment, *local, *dryRun)
+					performHotPatch(replica.Client, targetVersionSegment, *local, *dryRun)
 				}
 			}
 		}
@@ -145,7 +147,7 @@ func downloadUpgradeURL(version []int, platform string) string {
 	return githubUpgradeURL
 }
 
-func performHotPath(client *ssh.Client, version []int, local, dryRun bool) {
+func performHotPatch(client *ssh.Client, version []int, local, dryRun bool) {
 	pkgName := getPackageName(version, "")
 	packageURL := downloadPatchURL(version)
 	upgradeCmd := newCmdArgs("ghe-upgrade", "-y", pkgName)
@@ -264,6 +266,17 @@ func executeCmdFailOnError(client *ssh.Client, cmd string) {
 	}
 }
 
+func checkReplStatus(client *ssh.Client) bool {
+	replStatusCmd := newCmd("ghe-repl-status")
+	err := executeCmd(client, replStatusCmd.String())
+	if err != nil {
+		return true
+	}
+	log.Printf("Somethign wrong happened while executing `ghe-repl-status`: %v", err)
+	return userConfirm()
+
+}
+
 func enableRreplication(config YamlConfig, dryRun bool) {
 	primary, _ := splitHostPort(config.Primary.Host)
 	replSetupCmd := newCmd("ghe-repl-setup")
@@ -291,7 +304,7 @@ func enableRreplication(config YamlConfig, dryRun bool) {
 			executeCmdFailOnError(replica.Client, startReplCmd.String())
 		}
 		if !dryRun {
-			executeCmdFailOnError(replica.Client, replStatusCmd.String())
+			executeCmd(replica.Client, replStatusCmd.String())
 		}
 		if replica.Datacenter != "" {
 			log.Println("-->  Configuring replication for datacenter: " + replica.Datacenter)
