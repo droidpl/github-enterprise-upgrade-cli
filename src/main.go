@@ -61,6 +61,7 @@ func main() {
 	currentVersion, _ := version.NewVersion(getInstalledVersion(cfg.Primary.Client))
 	if cfg.Primary.ReplicaEnabled {
 		checkPrimaryReplicasVersion(cfg, currentVersion)
+		checkAllReplStatus(cfg)
 	}
 	// Verify Target version with the current installed version
 	if currentVersion.GreaterThanOrEqual(targetVersion) {
@@ -85,13 +86,13 @@ func main() {
 		// check if replica and perform individual upgrades on them
 		if cfg.Primary.ReplicaEnabled {
 			for i, replica := range cfg.Replicas {
-				if checkReplStatus(replica.Client) {
-					log.Println("--> Updating Replica server " + replica.Host)
-					performUpgrade(replica.Client, targetVersionSegment, *platform, *local, *dryRun)
-					// server reboot, we need to open new connection to disable maintenance mode
-					cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, replica.SSHKey, *refreshHostSSHKeys)
-					waitCfgToFinish(cfg.Replicas[i].Client, *dryRun)
-				}
+
+				log.Println("--> Updating Replica server " + replica.Host)
+				performUpgrade(replica.Client, targetVersionSegment, *platform, *local, *dryRun)
+				// server reboot, we need to open new connection to disable maintenance mode
+				cfg.Replicas[i].Client = refreshSSHClients(replica.Host, replica.User, replica.SSHKey, *refreshHostSSHKeys)
+				waitCfgToFinish(cfg.Replicas[i].Client, *dryRun)
+
 			}
 			// Enabling again replication
 			enableRreplication(cfg, *dryRun)
@@ -107,10 +108,10 @@ func main() {
 		// check if replica and perform individual patchs on them
 		if cfg.Primary.ReplicaEnabled {
 			for _, replica := range cfg.Replicas {
-				if checkReplStatus(replica.Client) {
-					log.Println("--> Updating Replica server " + replica.Host)
-					performHotPatch(replica.Client, targetVersionSegment, *local, *dryRun)
-				}
+
+				log.Println("--> Updating Replica server " + replica.Host)
+				performHotPatch(replica.Client, targetVersionSegment, *local, *dryRun)
+
 			}
 		}
 	}
@@ -266,14 +267,26 @@ func executeCmdFailOnError(client *ssh.Client, cmd string) {
 	}
 }
 
+// Check status of given replica and ask  user if he wants to continue upgrade even with reported errors
 func checkReplStatus(client *ssh.Client) bool {
 	replStatusCmd := newCmd("ghe-repl-status")
 	err := executeCmd(client, replStatusCmd.String())
-	if err != nil {
+	if err == nil {
 		return true
 	}
-	log.Printf("Somethign wrong happened while executing `ghe-repl-status`: %v", err)
+	log.Printf("Something went wrong while executing `ghe-repl-status`. Check details above (Trace: %v)", err)
 	return userConfirm()
+
+}
+
+// Check all replicas status
+func checkAllReplStatus(config YamlConfig) {
+	for _, replica := range config.Replicas {
+		log.Printf("--> Checking replica %s status", replica.Host)
+		if !checkReplStatus(replica.Client) {
+			os.Exit(1)
+		}
+	}
 
 }
 

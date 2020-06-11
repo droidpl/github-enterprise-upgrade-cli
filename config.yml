@@ -1,8 +1,11 @@
 primary:
-   host: primary
-   replication_enabled: false
+   host: 34.78.119.231:122
+   user: admin
+   active: true
+   datacenter: "my-datacenter"
+   replication_enabled: true
 replicas:
-   - host: 35.187.46.196:122
+   - host: 35.240.9.138:122
      user: admin
      active: true
      datacenter: "my-datacenter"

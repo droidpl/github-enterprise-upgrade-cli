@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/manifoldco/promptui"
 	"github.com/olekukonko/tablewriter"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v2"
@@ -120,16 +121,13 @@ func (config *YamlConfig) bringFacts(currentVer, targetVer string, assumeYes, dr
 }
 
 func userConfirm() bool {
-	var str string
-	for {
-		fmt.Print("Do you want to proceed (y/n)?")
-		fmt.Scanf("%s", &str)
-		if strings.ToLower(str) == "y" {
-			return true
-		}
-		if strings.ToLower(str) == "n" {
-			log.Println("Upgrade Aborted")
-			return false
-		}
+	prompt := promptui.Select{
+		Label: "Would you like to continue ?",
+		Items: []string{"Yes", "No"},
 	}
+	_, result, err := prompt.Run()
+	if err != nil {
+		log.Fatalf("Prompt failed %v\n", err)
+	}
+	return result == "Yes"
 }
