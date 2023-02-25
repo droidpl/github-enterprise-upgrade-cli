@@ -9,6 +9,6 @@ require (
 	github.com/olekukonko/tablewriter v0.0.4
 	github.com/pkg/sftp v1.11.0
 	github.com/schollz/progressbar/v3 v3.1.1
-	golang.org/x/crypto v0.0.0-20200414173820-0848c9571904
+	golang.org/x/crypto v0.1.0
 	gopkg.in/yaml.v2 v2.2.8
 )
